@@ -324,7 +324,8 @@ static BOOL vc4_submit_texture_bounds_valid(const struct VC4BO *bo,
     level_size = (uint64_t)aligned_width * aligned_height * cpp;
     base_offset = (uint64_t)offset + (uint64_t)cube_stride * 5U;
     if (base_offset >= bo->bo_Size ||
-        level_size > bo->bo_Size - base_offset)
+        level_size > bo->bo_Size - base_offset ||
+        (uint64_t)bo->bo_BusAddress + p0 > UINT32_MAX)
         return FALSE;
 
     /*
@@ -501,7 +502,8 @@ static uint32_t vc4_bin_packet_size(uint8_t opcode)
  * The command stream is always little-endian, independently of the CPU
  * byte order used by a possible future AROS target.
  */
-static BOOL vc4_submit_bin_cl_valid(const uint8_t *cl, uint32_t size,
+static BOOL vc4_submit_bin_cl_valid(struct VC4Base *VC4Base,
+    const uint8_t *cl, uint32_t size, const uint32_t *handles,
     uint32_t bo_count, uint32_t shader_rec_count,
     struct VC4SubmitShaderState *states, uint32_t *state_count)
 {
@@ -568,13 +570,33 @@ static BOOL vc4_submit_bin_cl_valid(const uint8_t *cl, uint32_t size,
                 break;
 
             case VC4_PACKET_GL_INDEXED_PRIMITIVE:
+            {
+                struct VC4BO *index_bo;
+                uint32_t length;
+                uint32_t index_offset;
+                uint32_t index_size;
+                uint64_t end;
+
                 if (!shader_states || bo_index[0] >= bo_count)
+                    return FALSE;
+                index_bo = vc4_find_bo(VC4Base, handles[bo_index[0]]);
+                if (!index_bo || (index_bo->bo_Flags & VC4_BOF_SHADER))
+                    return FALSE;
+                length = vc4_read_le32(cl + offset + 2);
+                index_offset = vc4_read_le32(cl + offset + 6);
+                index_size = (cl[offset + 1] >> 4) ? 2U : 1U;
+                end = (uint64_t)index_offset +
+                    (uint64_t)length * index_size;
+                if (end > index_bo->bo_Size ||
+                    (uint64_t)index_bo->bo_BusAddress + index_offset >
+                        UINT32_MAX)
                     return FALSE;
                 if (vc4_read_le32(cl + offset + 10) >
                     states[shader_states - 1].max_index)
                     states[shader_states - 1].max_index =
                         vc4_read_le32(cl + offset + 10);
                 break;
+            }
 
             case VC4_PACKET_GL_ARRAY_PRIMITIVE:
             {
@@ -708,7 +730,8 @@ static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
                 last_byte = (uint64_t)bo_offset + attribute_size;
                 if (stride)
                     last_byte += (uint64_t)state->max_index * stride;
-                if (last_byte > bo->bo_Size)
+                if (last_byte > bo->bo_Size ||
+                    (uint64_t)bo->bo_BusAddress + bo_offset > UINT32_MAX)
                     return FALSE;
             }
         }
@@ -860,8 +883,8 @@ AROS_LH1(int, VC4ValidateSubmitCL,
 
     if (valid)
     {
-        valid = vc4_submit_bin_cl_valid(bin_cl_copy,
-            submit->bin_cl_size, submit->bo_handle_count,
+        valid = vc4_submit_bin_cl_valid(VC4Base, bin_cl_copy,
+            submit->bin_cl_size, handles, submit->bo_handle_count,
             submit->shader_rec_count, shader_states, &shader_state_count);
     }
 

@@ -325,6 +325,9 @@ O build completo precisa dos submódulos. Um exemplo é
 - mipmaps/cube maps: níveis menores são caminhados para trás com transição
   T→LT e proteção contra underflow; cube stride em P2/P3 cobre todas as seis
   faces e não pode estar ausente nem duplicado.
+- index buffers: offset, quantidade e índice U8/U16 são validados em 64 bits
+  contra o BO selecionado por `GEM_HANDLES`. Somas futuras com o endereço de
+  barramento também são verificadas para index, vertex e texture BOs.
 
 ## Referências locais consultadas
 

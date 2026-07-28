@@ -1079,7 +1079,18 @@ a sexta face. Stride ausente ou duplicado é rejeitado.
 Formatos que o validador upstream considera inseguros permanecem rejeitados.
 Nenhuma relocation é escrita.
 
-`vc4.resource` passou para aproximadamente 20.6 KiB e define o vetor
+As precondições da relocation de index buffers agora também são validadas.
+Para cada `GL_INDEXED_PRIMITIVE`, o pseudo-pacote `GEM_HANDLES` seleciona um
+BO de dados; o decoder extrai offset, count e tamanho de índice U8/U16 e prova
+em 64 bits que `offset + count * index_size` cabe no BO. Shader BOs são
+rejeitados como index buffer.
+
+Antes de qualquer futura soma, index buffers, vertex buffers e texturas
+também verificam que `bus_address + offset` é representável em 32 bits. Esta
+etapa valida tudo que é necessário para calcular essas relocations, mas ainda
+não escreve os endereços no snapshot privado.
+
+`vc4.resource` passou para aproximadamente 20.7 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 
@@ -1090,7 +1101,8 @@ próximo subconjunto deve aprofundar a validação sem executar:
 
 - completar o validador QPU com clamps, basic blocks, modo TMU direto e VPM;
 - validar P0-P3 e os limites físicos de cada texture BO;
-- validar child images codificadas pelos outros tipos de P2/P3;
+- criar uma bin CL privada compactada, removendo `GEM_HANDLES`;
+- escrever relocations somente nessa cópia privada;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;
 - manter execução desativada até existir uma lista validada e relocada.
