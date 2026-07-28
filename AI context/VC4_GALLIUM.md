@@ -1008,10 +1008,22 @@ arredondado para página; apenas o tamanho lógico entra no decoder. A passagem:
 
 Essa passagem reduz a superfície aceita, mas ainda não prova segurança
 completa. Falta portar a análise de data-flow do upstream para uniforms,
-configuração TMU, clamps, resets de uniform address, thread switches e VPM.
+configuração TMU, clamps, resets de uniform address e VPM.
 Por isso ela não muda a decisão de manter execução desabilitada.
 
-`vc4.resource` passou para aproximadamente 16.8 KiB e define o vetor
+O decoder QPU agora também conta as leituras diretas do FIFO de uniforms,
+respeitando a diferença entre `SMALL_IMM`, `LOAD_IMM` e instruções ALU. A soma
+mínima dos três shaders de cada shader record não pode ultrapassar o snapshot
+de uniforms, cujo tamanho deve ser múltiplo de 32 bits. Isso detecta overreads
+simples; parâmetros implícitos de TMU e resets de uniform address ainda não
+entram na conta e continuam pendentes.
+
+As invariantes independentes de data-flow para shaders threaded também foram
+portadas: switches precisam estar separados pelos delay slots, branches não
+podem ocorrer dentro deles e um shader threaded não pode usar a metade
+superior dos register files.
+
+`vc4.resource` passou para aproximadamente 18.5 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 

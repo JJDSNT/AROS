@@ -305,6 +305,10 @@ O build completo precisa dos submódulos. Um exemplo é
   terminação, branches e destinos de escrita imediatamente perigosos são
   checados. A análise completa de data-flow continua pendente, portanto esta
   etapa ainda não autoriza execução.
+- uniforms/threading QPU: leituras diretas produzem um limite inferior
+  confrontado com o stream de uniforms; regras de delay entre thread switches
+  e uso da metade superior dos registradores também são verificadas. TMU e
+  resets do endereço de uniforms ainda não fazem parte da prova.
 
 ## Referências locais consultadas
 

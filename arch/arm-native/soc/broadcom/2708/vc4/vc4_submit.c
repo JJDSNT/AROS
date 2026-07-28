@@ -73,14 +73,19 @@ static uint64_t vc4_read_le64(const uint8_t *bytes)
  * yet sufficient to authorize execution: TMU and uniform data-flow analysis
  * is deliberately left for the complete validator.
  */
-static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo)
+static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo,
+    uint32_t *uniform_bytes)
 {
     const uint8_t *code;
     uint32_t instructions;
     uint32_t ip;
     uint32_t end_ip = UINT32_MAX;
+    uint32_t uniforms = 0;
+    int32_t last_thread_switch = -3;
+    BOOL threaded = FALSE;
+    BOOL upper_registers = FALSE;
 
-    if (!bo || !(bo->bo_Flags & VC4_BOF_SHADER) ||
+    if (!uniform_bytes || !bo || !(bo->bo_Flags & VC4_BOF_SHADER) ||
         !bo->bo_CPUAddress || bo->bo_LogicalSize < 3U * sizeof(uint64_t) ||
         (bo->bo_LogicalSize & (sizeof(uint64_t) - 1U)) != 0)
         return FALSE;
@@ -94,6 +99,8 @@ static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo)
         uint32_t signal = (uint32_t)(instruction >> 60);
         uint32_t waddr_add = (uint32_t)((instruction >> 38) & 0x3fU);
         uint32_t waddr_mul = (uint32_t)((instruction >> 32) & 0x3fU);
+        uint32_t raddr_a = (uint32_t)((instruction >> 18) & 0x3fU);
+        uint32_t raddr_b = (uint32_t)((instruction >> 12) & 0x3fU);
 
         if (signal == 0 || signal == 7 || signal == 9 || signal == 12)
             return FALSE;
@@ -107,7 +114,8 @@ static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo)
                 (instruction & ((uint64_t)1 << 51)) == 0 ||
                 (branch_offset & 7) != 0 ||
                 waddr_add != 39 || waddr_mul != 39 ||
-                ip + 4U >= instructions)
+                ip + 4U >= instructions ||
+                (int32_t)ip < last_thread_switch + 3)
                 return FALSE;
             target = (int64_t)ip + 4 + branch_offset / 8;
             if (target < 0 || target >= instructions)
@@ -120,6 +128,35 @@ static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo)
                 waddr_mul == 36 || waddr_mul == 38 ||
                 waddr_mul == 47 || waddr_mul == 50 || waddr_mul == 51)
                 return FALSE;
+
+            if ((waddr_add >= 16 && waddr_add < 32) ||
+                (waddr_mul >= 16 && waddr_mul < 32))
+                upper_registers = TRUE;
+            if (signal != 14 &&
+                ((raddr_a >= 16 && raddr_a < 32) ||
+                 (signal != 13 && raddr_b >= 16 && raddr_b < 32)))
+                upper_registers = TRUE;
+
+            if (signal == 2 || signal == 6)
+            {
+                if ((int32_t)ip < last_thread_switch + 3)
+                    return FALSE;
+                threaded = TRUE;
+                last_thread_switch = (int32_t)ip;
+            }
+
+            /*
+             * LOAD_IMM and BRANCH reuse these bit positions for other
+             * fields.  SMALL_IMM replaces only raddr_b; raddr_a remains a
+             * real read port.
+             */
+            if (signal != 14 &&
+                (raddr_a == 32 || (signal != 13 && raddr_b == 32)))
+            {
+                if (uniforms > UINT32_MAX - sizeof(uint32_t))
+                    return FALSE;
+                uniforms += sizeof(uint32_t);
+            }
         }
 
         if (signal == 3)
@@ -129,7 +166,12 @@ static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo)
             end_ip = ip + 2U;
         }
         if (ip == end_ip)
+        {
+            if (threaded && upper_registers)
+                return FALSE;
+            *uniform_bytes = uniforms;
             return TRUE;
+        }
     }
 
     return FALSE;
@@ -287,11 +329,12 @@ static BOOL vc4_submit_bin_cl_valid(const uint8_t *cl, uint32_t size,
 static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
     const uint8_t *records, uint32_t records_size, const uint32_t *handles,
     uint32_t handle_count, const struct VC4SubmitShaderState *states,
-    uint32_t state_count)
+    uint32_t state_count, uint32_t uniforms_size)
 {
     static const uint32_t shader_offsets[3] = { 4, 16, 28 };
     uint32_t offset = 0;
     uint32_t state_index;
+    uint64_t minimum_uniform_bytes = 0;
 
     for (state_index = 0; state_index < state_count; state_index++)
     {
@@ -333,9 +376,15 @@ static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
 
             if (i < 3)
             {
+                uint32_t shader_uniform_bytes;
+
                 if (!(bo->bo_Flags & VC4_BOF_SHADER) ||
                     vc4_read_le32(record + shader_offsets[i]) != 0 ||
-                    !vc4_submit_qpu_shader_valid(bo))
+                    !vc4_submit_qpu_shader_valid(bo,
+                        &shader_uniform_bytes))
+                    return FALSE;
+                minimum_uniform_bytes += shader_uniform_bytes;
+                if (minimum_uniform_bytes > uniforms_size)
                     return FALSE;
             }
             else
@@ -438,6 +487,7 @@ AROS_LH1(int, VC4ValidateSubmitCL,
         submit->bin_cl_size > VC4_SUBMIT_MAX_STREAM_SIZE ||
         submit->shader_rec_size > VC4_SUBMIT_MAX_STREAM_SIZE ||
         submit->uniforms_size > VC4_SUBMIT_MAX_STREAM_SIZE ||
+        (submit->uniforms_size & (sizeof(uint32_t) - 1U)) != 0 ||
         submit->shader_rec_count > VC4_SUBMIT_MAX_SHADER_STATES ||
         submit->shader_rec_count > submit->shader_rec_size / sizeof(uint32_t))
         return VC4_SUBMIT_ERR_INVALID;
@@ -510,7 +560,7 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     {
         valid = vc4_submit_shader_recs_valid(VC4Base, shader_rec_copy,
             submit->shader_rec_size, handles, submit->bo_handle_count,
-            shader_states, shader_state_count);
+            shader_states, shader_state_count, submit->uniforms_size);
     }
 
     if (valid)
