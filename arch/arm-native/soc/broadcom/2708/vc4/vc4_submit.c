@@ -11,6 +11,7 @@
 #include "vc4_private.h"
 
 #define VC4_SUBMIT_MAX_STREAM_SIZE (16U * 1024U * 1024U)
+#define VC4_SUBMIT_MAX_TOTAL_SIZE  (32U * 1024U * 1024U)
 #define VC4_SUBMIT_MAX_BO_HANDLES  65536U
 #define VC4_SUBMIT_VALID_FLAGS     0x0fU
 
@@ -55,6 +56,11 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     AROS_LIBFUNC_INIT
 
     const uint32_t *handles;
+    APTR bin_cl_copy = NULL;
+    APTR shader_rec_copy = NULL;
+    APTR uniforms_copy = NULL;
+    APTR handles_copy = NULL;
+    uint64_t total_size;
     uint32_t handles_size;
     uint32_t i;
     BOOL valid;
@@ -76,6 +82,11 @@ AROS_LH1(int, VC4ValidateSubmitCL,
         return VC4_SUBMIT_ERR_INVALID;
 
     handles_size = submit->bo_handle_count * sizeof(uint32_t);
+    total_size = (uint64_t)submit->bin_cl_size +
+        submit->shader_rec_size + submit->uniforms_size + handles_size;
+    if (total_size > VC4_SUBMIT_MAX_TOTAL_SIZE)
+        return VC4_SUBMIT_ERR_INVALID;
+
     if (!vc4_submit_range_valid(submit->bin_cl, submit->bin_cl_size, 4) ||
         !vc4_submit_range_valid(submit->shader_rec,
             submit->shader_rec_size, 4) ||
@@ -84,7 +95,31 @@ AROS_LH1(int, VC4ValidateSubmitCL,
         !vc4_submit_range_valid(submit->bo_handles, handles_size, 4))
         return VC4_SUBMIT_ERR_INVALID;
 
-    handles = (const uint32_t *)(uintptr_t)submit->bo_handles;
+    bin_cl_copy = AllocMem(submit->bin_cl_size, MEMF_PUBLIC);
+    shader_rec_copy = AllocMem(submit->shader_rec_size, MEMF_PUBLIC);
+    uniforms_copy = AllocMem(submit->uniforms_size, MEMF_PUBLIC);
+    handles_copy = AllocMem(handles_size, MEMF_PUBLIC);
+    if (!bin_cl_copy || !shader_rec_copy || !uniforms_copy || !handles_copy)
+    {
+        valid = FALSE;
+        goto cleanup;
+    }
+
+    /*
+     * From this point onward validation uses resource-owned snapshots.  AROS
+     * has one address space, so a completely invalid source pointer may still
+     * fault during CopyMem; no pointer is retained after this call.
+     */
+    CopyMem((const void *)(uintptr_t)submit->bin_cl, bin_cl_copy,
+        submit->bin_cl_size);
+    CopyMem((const void *)(uintptr_t)submit->shader_rec, shader_rec_copy,
+        submit->shader_rec_size);
+    CopyMem((const void *)(uintptr_t)submit->uniforms, uniforms_copy,
+        submit->uniforms_size);
+    CopyMem((const void *)(uintptr_t)submit->bo_handles, handles_copy,
+        handles_size);
+
+    handles = handles_copy;
     ObtainSemaphoreShared(&VC4Base->vc4_Lock);
 
     valid = TRUE;
@@ -115,6 +150,16 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     }
 
     ReleaseSemaphore(&VC4Base->vc4_Lock);
+
+cleanup:
+    if (handles_copy)
+        FreeMem(handles_copy, handles_size);
+    if (uniforms_copy)
+        FreeMem(uniforms_copy, submit->uniforms_size);
+    if (shader_rec_copy)
+        FreeMem(shader_rec_copy, submit->shader_rec_size);
+    if (bin_cl_copy)
+        FreeMem(bin_cl_copy, submit->bin_cl_size);
     return valid ? 0 : VC4_SUBMIT_ERR_INVALID;
 
     AROS_LIBFUNC_EXIT

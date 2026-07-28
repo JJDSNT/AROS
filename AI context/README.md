@@ -290,6 +290,9 @@ O build completo precisa dos submódulos. Um exemplo é
 - fronteira `SUBMIT_CL`: ABI de 176 bytes reproduzida, limites/pointers/handles
   e superfícies validados pelo `vc4.resource`; a fachada retorna explicitamente
   “não implementado” após sucesso, sem tocar no V3D.
+- snapshots de submissão: bin CL, shader records, uniforms e handles são
+  copiados para até 32 MiB de memória do recurso antes da resolução, sem
+  reter ponteiros do caller.
 
 ## Referências locais consultadas
 

@@ -923,6 +923,12 @@ A validação atual:
 - resolve todos os handles sob o semáforo compartilhado de `vc4.resource`;
 - valida cada `hindex` de superfície e seu offset contra o BO resolvido.
 
+Antes da resolução, o recurso agora aloca snapshots privados de bin CL,
+shader records, uniforms e handles, limitando a soma a 32 MiB. Os quatro
+blocos são copiados uma vez; toda validação posterior usa somente essas
+cópias e elas são liberadas antes do retorno. Nenhum ponteiro do caller é
+retido.
+
 A fachada implementa `VC4_DRM_SUBMIT_CL`. Ela copia a estrutura de transporte
 para a ABI nativa, chama `VC4ValidateSubmitCL` e, se tudo estiver válido,
 retorna:
@@ -935,9 +941,9 @@ Portanto, nenhuma escrita em registradores V3D ocorre. Validação e execução
 estão deliberadamente separadas.
 
 Como AROS usa um único address space, checar aritmética/alinhamento não prova
-que um endereço arbitrário esteja legível. A etapa de execução deverá copiar
-os streams imediatamente para memória própria, antes de validação profunda,
-e nunca conservar ponteiros do caller.
+que um endereço arbitrário esteja legível: um ponteiro completamente inválido
+ainda pode causar fault durante `CopyMem`. Depois da cópia, porém, mutações do
+caller não afetam a resolução de handles nem a futura validação profunda.
 
 O autoteste opt-in monta uma submissão mínima com um BO real. A estrutura
 válida deve alcançar `NOT_IMPLEMENTED`; ao substituir o handle por
@@ -952,7 +958,6 @@ compilam sem símbolos indefinidos.
 Substituir progressivamente o screen de sondagem pelo `vc4_screen.c` real. O
 próximo subconjunto deve aprofundar a validação sem executar:
 
-- copiar streams e handles para memória pertencente ao recurso;
 - decodificar a bin CL pacote por pacote;
 - rejeitar opcodes desconhecidos e comprimentos inválidos;
 - identificar relocations para shader records/uniforms/BOs;
