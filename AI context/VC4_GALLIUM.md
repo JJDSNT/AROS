@@ -1067,10 +1067,19 @@ P0/P1 agora são decodificados para a textura de nível base. O validador:
 - alinha a área a utile, ou a macrotiles 8 × 8 no modo T;
 - usa aritmética de 64 bits e exige `offset + level_size <= bo_Size`.
 
-Cube maps, mip levels e formatos que o validador upstream também considera
-inseguros permanecem rejeitados. Nenhuma relocation é escrita.
+Mip levels agora são caminhados em ordem reversa a partir do endereço-base,
+como no validador upstream. Cada nível reduz dimensões até 1 × 1, recalcula o
+alinhamento e pode fazer a transição T→LT. Toda subtração é verificada para
+impedir underflow antes de alcançar memória anterior ao BO.
 
-`vc4.resource` passou para aproximadamente 20.1 KiB e define o vetor
+Cube maps também são aceitos quando exatamente um P2 ou P3 fornece um stride
+não zero. O cálculo em 64 bits valida `base + 5 * stride + tamanho`, cobrindo
+a sexta face. Stride ausente ou duplicado é rejeitado.
+
+Formatos que o validador upstream considera inseguros permanecem rejeitados.
+Nenhuma relocation é escrita.
+
+`vc4.resource` passou para aproximadamente 20.6 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 
@@ -1081,7 +1090,7 @@ próximo subconjunto deve aprofundar a validação sem executar:
 
 - completar o validador QPU com clamps, basic blocks, modo TMU direto e VPM;
 - validar P0-P3 e os limites físicos de cada texture BO;
-- adicionar a caminhada reversa dos mip levels e o stride de cube maps;
+- validar child images codificadas pelos outros tipos de P2/P3;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;
 - manter execução desativada até existir uma lista validada e relocada.

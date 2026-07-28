@@ -321,9 +321,10 @@ O build completo precisa dos submódulos. Um exemplo é
   writes TMU, P0/P1 são obrigatórios e o endereço-base P0 deve cair dentro do
   texture BO. Essa reconstrução alimenta o cálculo de bounds subsequente.
 - bounds da textura base: formato, largura, altura, ETC1 e layouts linear/LT/T
-  determinam a área alinhada, verificada integralmente contra o BO. Mipmaps e
-  cube maps continuam rejeitados até suas caminhadas específicas serem
-  portadas.
+  determinam a área alinhada, verificada integralmente contra o BO.
+- mipmaps/cube maps: níveis menores são caminhados para trás com transição
+  T→LT e proteção contra underflow; cube stride em P2/P3 cobre todas as seis
+  faces e não pode estar ausente nem duplicado.
 
 ## Referências locais consultadas
 

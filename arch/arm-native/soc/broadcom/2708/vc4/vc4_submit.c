@@ -233,7 +233,7 @@ static uint32_t vc4_round_up_u32(uint32_t value, uint32_t alignment)
 }
 
 static BOOL vc4_submit_texture_bounds_valid(const struct VC4BO *bo,
-    uint32_t p0, uint32_t p1)
+    uint32_t p0, uint32_t p1, uint32_t p2, uint32_t p3)
 {
     uint32_t offset = p0 & 0xfffff000U;
     uint32_t width = (p1 >> 8) & 0x7ffU;
@@ -245,12 +245,26 @@ static BOOL vc4_submit_texture_bounds_valid(const struct VC4BO *bo,
     uint32_t aligned_width;
     uint32_t aligned_height;
     uint64_t level_size;
+    uint32_t mip_levels = p0 & 0xfU;
+    uint32_t level;
+    uint32_t cube_stride = 0;
+    uint64_t base_offset;
     BOOL linear;
     BOOL lt;
 
-    /* Cube maps and mip levels need the P2/P3 and reverse-level walk. */
-    if ((p0 & (1U << 9)) != 0 || (p0 & 0xfU) != 0)
-        return FALSE;
+    if ((p0 & (1U << 9)) != 0)
+    {
+        if ((p2 >> 30) == 1)
+            cube_stride = p2 & 0x3ffff000U;
+        if ((p3 >> 30) == 1)
+        {
+            if (cube_stride)
+                return FALSE;
+            cube_stride = p3 & 0x3ffff000U;
+        }
+        if (!cube_stride)
+            return FALSE;
+    }
     if (!width)
         width = 2048;
     if (!height)
@@ -308,7 +322,54 @@ static BOOL vc4_submit_texture_bounds_valid(const struct VC4BO *bo,
     }
 
     level_size = (uint64_t)aligned_width * aligned_height * cpp;
-    return offset < bo->bo_Size && level_size <= bo->bo_Size - offset;
+    base_offset = (uint64_t)offset + (uint64_t)cube_stride * 5U;
+    if (base_offset >= bo->bo_Size ||
+        level_size > bo->bo_Size - base_offset)
+        return FALSE;
+
+    /*
+     * Mip levels precede the base image.  The tiling decision is repeated at
+     * each level and may transition from T to LT, but never back to T.
+     */
+    for (level = 1; level <= mip_levels; level++)
+    {
+        uint32_t level_width = width >> level;
+        uint32_t level_height = height >> level;
+
+        if (!level_width)
+            level_width = 1;
+        if (!level_height)
+            level_height = 1;
+        if (!linear && !lt &&
+            (level_width <= 4U * utile_width ||
+             level_height <= 4U * utile_height))
+            lt = TRUE;
+
+        if (linear)
+        {
+            aligned_width = vc4_round_up_u32(level_width, utile_width);
+            aligned_height = level_height;
+        }
+        else if (lt)
+        {
+            aligned_width = vc4_round_up_u32(level_width, utile_width);
+            aligned_height = vc4_round_up_u32(level_height, utile_height);
+        }
+        else
+        {
+            aligned_width = vc4_round_up_u32(level_width,
+                utile_width * 8U);
+            aligned_height = vc4_round_up_u32(level_height,
+                utile_height * 8U);
+        }
+
+        level_size = (uint64_t)aligned_width * aligned_height * cpp;
+        if (level_size > offset)
+            return FALSE;
+        offset -= (uint32_t)level_size;
+    }
+
+    return TRUE;
 }
 
 static BOOL vc4_submit_qpu_textures_valid(struct VC4Base *VC4Base,
@@ -353,6 +414,8 @@ static BOOL vc4_submit_qpu_textures_valid(struct VC4Base *VC4Base,
                 uint32_t hindex;
                 uint32_t p0;
                 uint32_t p1;
+                uint32_t p2;
+                uint32_t p3;
                 struct VC4BO *texture_bo;
 
                 if (counts[tmu] < 2 || sample >= texture_count)
@@ -364,8 +427,13 @@ static BOOL vc4_submit_qpu_textures_valid(struct VC4Base *VC4Base,
                 texture_bo = vc4_find_bo(VC4Base, handles[hindex]);
                 p0 = vc4_read_le32(uniform_data + offsets[tmu][0]);
                 p1 = vc4_read_le32(uniform_data + offsets[tmu][1]);
+                p2 = counts[tmu] > 2 ?
+                    vc4_read_le32(uniform_data + offsets[tmu][2]) : 0;
+                p3 = counts[tmu] > 3 ?
+                    vc4_read_le32(uniform_data + offsets[tmu][3]) : 0;
                 if (!texture_bo ||
-                    !vc4_submit_texture_bounds_valid(texture_bo, p0, p1))
+                    !vc4_submit_texture_bounds_valid(texture_bo,
+                        p0, p1, p2, p3))
                     return FALSE;
                 counts[tmu] = 0;
                 sample++;
