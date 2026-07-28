@@ -319,8 +319,11 @@ O build completo precisa dos submódulos. Um exemplo é
   imagem continuam pendentes.
 - P0/P1 inicial: os offsets dos parâmetros são reconstruídos diretamente dos
   writes TMU, P0/P1 são obrigatórios e o endereço-base P0 deve cair dentro do
-  texture BO. Formato, dimensões, tiling e mip levels ainda não entram no
-  cálculo completo de bounds.
+  texture BO. Essa reconstrução alimenta o cálculo de bounds subsequente.
+- bounds da textura base: formato, largura, altura, ETC1 e layouts linear/LT/T
+  determinam a área alinhada, verificada integralmente contra o BO. Mipmaps e
+  cube maps continuam rejeitados até suas caminhadas específicas serem
+  portadas.
 
 ## Referências locais consultadas
 

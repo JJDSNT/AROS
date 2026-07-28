@@ -227,6 +227,90 @@ static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo,
     return FALSE;
 }
 
+static uint32_t vc4_round_up_u32(uint32_t value, uint32_t alignment)
+{
+    return (value + alignment - 1U) & ~(alignment - 1U);
+}
+
+static BOOL vc4_submit_texture_bounds_valid(const struct VC4BO *bo,
+    uint32_t p0, uint32_t p1)
+{
+    uint32_t offset = p0 & 0xfffff000U;
+    uint32_t width = (p1 >> 8) & 0x7ffU;
+    uint32_t height = (p1 >> 20) & 0x7ffU;
+    uint32_t type = ((p0 >> 4) & 0xfU) | ((p1 >> 27) & 0x10U);
+    uint32_t cpp;
+    uint32_t utile_width;
+    uint32_t utile_height;
+    uint32_t aligned_width;
+    uint32_t aligned_height;
+    uint64_t level_size;
+    BOOL linear;
+    BOOL lt;
+
+    /* Cube maps and mip levels need the P2/P3 and reverse-level walk. */
+    if ((p0 & (1U << 9)) != 0 || (p0 & 0xfU) != 0)
+        return FALSE;
+    if (!width)
+        width = 2048;
+    if (!height)
+        height = 2048;
+
+    switch (type)
+    {
+        case 0:
+        case 1:
+        case 16:
+            cpp = 4;
+            break;
+        case 2:
+        case 3:
+        case 4:
+        case 7:
+        case 9:
+        case 11:
+            cpp = 2;
+            break;
+        case 5:
+        case 6:
+        case 10:
+            cpp = 1;
+            break;
+        case 8:
+            cpp = 8;
+            width = (width + 3U) >> 2;
+            height = (height + 3U) >> 2;
+            break;
+        default:
+            return FALSE;
+    }
+
+    utile_width = cpp <= 2 ? 8U : (cpp == 4 ? 4U : 2U);
+    utile_height = cpp == 1 ? 8U : 4U;
+    linear = type == 16;
+    lt = !linear &&
+        (width <= 4U * utile_width || height <= 4U * utile_height);
+
+    if (linear)
+    {
+        aligned_width = vc4_round_up_u32(width, utile_width);
+        aligned_height = height;
+    }
+    else if (lt)
+    {
+        aligned_width = vc4_round_up_u32(width, utile_width);
+        aligned_height = vc4_round_up_u32(height, utile_height);
+    }
+    else
+    {
+        aligned_width = vc4_round_up_u32(width, utile_width * 8U);
+        aligned_height = vc4_round_up_u32(height, utile_height * 8U);
+    }
+
+    level_size = (uint64_t)aligned_width * aligned_height * cpp;
+    return offset < bo->bo_Size && level_size <= bo->bo_Size - offset;
+}
+
 static BOOL vc4_submit_qpu_textures_valid(struct VC4Base *VC4Base,
     const struct VC4BO *shader, const uint8_t *texture_handles,
     uint32_t texture_count, const uint8_t *uniform_data,
@@ -268,6 +352,7 @@ static BOOL vc4_submit_qpu_textures_valid(struct VC4Base *VC4Base,
             {
                 uint32_t hindex;
                 uint32_t p0;
+                uint32_t p1;
                 struct VC4BO *texture_bo;
 
                 if (counts[tmu] < 2 || sample >= texture_count)
@@ -278,8 +363,9 @@ static BOOL vc4_submit_qpu_textures_valid(struct VC4Base *VC4Base,
                     return FALSE;
                 texture_bo = vc4_find_bo(VC4Base, handles[hindex]);
                 p0 = vc4_read_le32(uniform_data + offsets[tmu][0]);
-                if (!texture_bo || (p0 & 0xfffff000U) >=
-                    texture_bo->bo_Size)
+                p1 = vc4_read_le32(uniform_data + offsets[tmu][1]);
+                if (!texture_bo ||
+                    !vc4_submit_texture_bounds_valid(texture_bo, p0, p1))
                     return FALSE;
                 counts[tmu] = 0;
                 sample++;

@@ -1054,11 +1054,23 @@ P0, alinhado a 4 KiB pelo formato VC4, esteja dentro do BO resolvido. A
 passagem também comprova que a quantidade de amostras e todos os bytes
 consumidos coincidem com o resultado da primeira análise QPU.
 
-Esta é apenas a primeira parte de `reloc_tex()` upstream: P1 já precisa estar
-presente, mas seus campos de largura, altura e tipo ainda não são usados para
-calcular o último byte acessível. Nenhuma relocation é escrita.
+Essa reconstrução fornece a entrada necessária para portar progressivamente
+o cálculo de `reloc_tex()` upstream. Nenhuma relocation é escrita.
 
-`vc4.resource` passou para aproximadamente 19.7 KiB e define o vetor
+P0/P1 agora são decodificados para a textura de nível base. O validador:
+
+- extrai largura e altura de 11 bits, incluindo o valor especial zero = 2048;
+- combina os quatro bits de tipo de P0 com o quinto bit de P1;
+- aceita os formatos de 1, 2 e 4 bytes suportados pelo upstream, além de ETC1;
+- converte ETC1 para blocos de 4 × 4 com 8 bytes;
+- reproduz a seleção automática linear, LT ou T do hardware;
+- alinha a área a utile, ou a macrotiles 8 × 8 no modo T;
+- usa aritmética de 64 bits e exige `offset + level_size <= bo_Size`.
+
+Cube maps, mip levels e formatos que o validador upstream também considera
+inseguros permanecem rejeitados. Nenhuma relocation é escrita.
+
+`vc4.resource` passou para aproximadamente 20.1 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 
@@ -1069,6 +1081,7 @@ próximo subconjunto deve aprofundar a validação sem executar:
 
 - completar o validador QPU com clamps, basic blocks, modo TMU direto e VPM;
 - validar P0-P3 e os limites físicos de cada texture BO;
+- adicionar a caminhada reversa dos mip levels e o stride de cube maps;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;
 - manter execução desativada até existir uma lista validada e relocada.
