@@ -334,6 +334,9 @@ O build completo precisa dos submódulos. Um exemplo é
 - uniforms compactados: hindices de textura são removidos, apenas os words
   consumidos são copiados e P0 recebe a relocation do texture BO. A cópia
   ainda não possui endereço de barramento e é descartada sem execução.
+- shader records compactados: tabelas de hindices são removidas, records ficam
+  alinhados a 16 bytes e shaders/atributos recebem relocations. Ponteiros para
+  uniforms permanecem zerados até existir um BO GPU interno.
 
 ## Referências locais consultadas
 

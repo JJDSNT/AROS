@@ -1116,7 +1116,20 @@ próprio, e é descartada antes do retorno. Portanto, os ponteiros de uniforms
 nos shader records ainda não podem ser preenchidos e a execução permanece
 bloqueada.
 
-`vc4.resource` passou para aproximadamente 21.3 KiB e define o vetor
+Shader records agora também recebem uma cópia privada compactada. As tabelas
+de hindices que precedem cada record são consumidas, mas não emitidas; cada
+record normal ou extended é copiado e o próximo começa alinhado a 16 bytes.
+
+As três referências FS/VS/CS recebem o endereço de barramento dos shader BOs,
+e cada atributo recebe `vertex_bo_bus_address + offset`. Os respectivos bounds
+e overflows já foram provados antes da escrita. Os três ponteiros para
+uniforms são explicitamente zerados, pois só poderão ser preenchidos depois
+que a cópia compactada de uniforms estiver dentro do mesmo BO GPU interno.
+
+O padding introduzido pelo alinhamento nasce zerado, o tamanho produzido é
+limitado pelo stream original e toda a cópia é descartada sem execução.
+
+`vc4.resource` passou para aproximadamente 21.5 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 
@@ -1127,8 +1140,8 @@ próximo subconjunto deve aprofundar a validação sem executar:
 
 - completar o validador QPU com clamps, basic blocks, modo TMU direto e VPM;
 - validar P0-P3 e os limites físicos de cada texture BO;
-- criar a cópia privada relocada dos shader records;
 - colocar bin CL, shader records e uniforms em BO interno executável;
+- preencher as referências cruzadas usando offsets dentro desse BO;
 - criar o BO interno de tile allocation/state;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;
