@@ -13,6 +13,7 @@
 #define VC4_SUBMIT_MAX_STREAM_SIZE (16U * 1024U * 1024U)
 #define VC4_SUBMIT_MAX_TOTAL_SIZE  (32U * 1024U * 1024U)
 #define VC4_SUBMIT_MAX_BO_HANDLES  65536U
+#define VC4_SUBMIT_MAX_SHADER_STATES 65536U
 #define VC4_SUBMIT_VALID_FLAGS     0x0fU
 
 enum VC4BinPacket
@@ -39,6 +40,12 @@ enum VC4BinPacket
     VC4_PACKET_CLIPPER_Z_SCALING = 106,
     VC4_PACKET_TILE_BINNING_MODE_CONFIG = 112,
     VC4_PACKET_GEM_HANDLES = 254
+};
+
+struct VC4SubmitShaderState
+{
+    uint8_t pointer_bits;
+    uint32_t max_index;
 };
 
 _Static_assert(sizeof(struct VC4SubmitRCLSurface) == 12,
@@ -100,7 +107,8 @@ static uint32_t vc4_bin_packet_size(uint8_t opcode)
  * byte order used by a possible future AROS target.
  */
 static BOOL vc4_submit_bin_cl_valid(const uint8_t *cl, uint32_t size,
-    uint32_t bo_count, uint32_t shader_rec_count)
+    uint32_t bo_count, uint32_t shader_rec_count,
+    struct VC4SubmitShaderState *states, uint32_t *state_count)
 {
     uint32_t offset = 0;
     uint32_t packet_size;
@@ -158,18 +166,38 @@ static BOOL vc4_submit_bin_cl_valid(const uint8_t *cl, uint32_t size,
                 if ((vc4_read_le32(cl + offset + 1) & ~0x0fU) != 0 ||
                     shader_states >= shader_rec_count)
                     return FALSE;
+                states[shader_states].pointer_bits =
+                    (uint8_t)vc4_read_le32(cl + offset + 1);
+                states[shader_states].max_index = 0;
                 shader_states++;
                 break;
 
             case VC4_PACKET_GL_INDEXED_PRIMITIVE:
                 if (!shader_states || bo_index[0] >= bo_count)
                     return FALSE;
+                if (vc4_read_le32(cl + offset + 10) >
+                    states[shader_states - 1].max_index)
+                    states[shader_states - 1].max_index =
+                        vc4_read_le32(cl + offset + 10);
                 break;
 
             case VC4_PACKET_GL_ARRAY_PRIMITIVE:
+            {
+                uint32_t length;
+                uint32_t base_index;
+                uint32_t max_index;
+
                 if (!shader_states)
                     return FALSE;
+                length = vc4_read_le32(cl + offset + 2);
+                base_index = vc4_read_le32(cl + offset + 6);
+                if (!length || base_index > UINT32_MAX - (length - 1))
+                    return FALSE;
+                max_index = base_index + length - 1;
+                if (max_index > states[shader_states - 1].max_index)
+                    states[shader_states - 1].max_index = max_index;
                 break;
+            }
 
             case VC4_PACKET_HALT:
                 return FALSE;
@@ -178,7 +206,101 @@ static BOOL vc4_submit_bin_cl_valid(const uint8_t *cl, uint32_t size,
         offset += packet_size;
     }
 
+    *state_count = shader_states;
     return found_config && found_start && found_increment && found_flush;
+}
+
+static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
+    const uint8_t *records, uint32_t records_size, const uint32_t *handles,
+    uint32_t handle_count, const struct VC4SubmitShaderState *states,
+    uint32_t state_count)
+{
+    static const uint32_t shader_offsets[3] = { 4, 16, 28 };
+    uint32_t offset = 0;
+    uint32_t state_index;
+
+    for (state_index = 0; state_index < state_count; state_index++)
+    {
+        const struct VC4SubmitShaderState *state = &states[state_index];
+        uint32_t attributes = state->pointer_bits & 7U;
+        uint32_t record_size;
+        uint32_t relocations;
+        uint32_t relocation_size;
+        const uint8_t *relocation_data;
+        const uint8_t *record;
+        uint32_t i;
+
+        if (!attributes)
+            attributes = 8;
+        record_size = (state->pointer_bits & 8U) ?
+            100U + attributes * 4U : 36U + attributes * 8U;
+        relocations = 3U + attributes;
+        relocation_size = relocations * sizeof(uint32_t);
+
+        if (relocation_size > records_size - offset)
+            return FALSE;
+        relocation_data = records + offset;
+        offset += relocation_size;
+        if (record_size > records_size - offset)
+            return FALSE;
+        record = records + offset;
+        offset += record_size;
+
+        for (i = 0; i < relocations; i++)
+        {
+            uint32_t hindex = vc4_read_le32(relocation_data + i * 4U);
+            struct VC4BO *bo;
+
+            if (hindex >= handle_count)
+                return FALSE;
+            bo = vc4_find_bo(VC4Base, handles[hindex]);
+            if (!bo)
+                return FALSE;
+
+            if (i < 3)
+            {
+                if (!(bo->bo_Flags & VC4_BOF_SHADER) ||
+                    vc4_read_le32(record + shader_offsets[i]) != 0 ||
+                    bo->bo_Size < sizeof(uint64_t))
+                    return FALSE;
+            }
+            else
+            {
+                uint32_t attribute = i - 3U;
+                uint32_t attribute_offset = 36U + attribute * 8U;
+                uint32_t bo_offset =
+                    vc4_read_le32(record + attribute_offset);
+                uint32_t attribute_size =
+                    (uint32_t)record[attribute_offset + 4U] + 1U;
+                uint32_t stride = record[attribute_offset + 5U];
+                uint64_t last_byte;
+
+                if (bo->bo_Flags & VC4_BOF_SHADER)
+                    return FALSE;
+                if (state->pointer_bits & 8U)
+                    stride |= vc4_read_le32(record + 100U +
+                        attribute * 4U) & ~0xffU;
+                last_byte = (uint64_t)bo_offset + attribute_size;
+                if (stride)
+                    last_byte += (uint64_t)state->max_index * stride;
+                if (last_byte > bo->bo_Size)
+                    return FALSE;
+            }
+        }
+    }
+
+    /*
+     * Mesa may leave up to one alignment unit after the last record.  Accept
+     * only zero-filled padding so it cannot hide another record.
+     */
+    if (records_size - offset > 15)
+        return FALSE;
+    while (offset < records_size)
+    {
+        if (records[offset++] != 0)
+            return FALSE;
+    }
+    return TRUE;
 }
 
 static BOOL vc4_submit_range_valid(uint64_t pointer, uint32_t size,
@@ -221,8 +343,11 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     APTR shader_rec_copy = NULL;
     APTR uniforms_copy = NULL;
     APTR handles_copy = NULL;
+    struct VC4SubmitShaderState *shader_states = NULL;
     uint64_t total_size;
     uint32_t handles_size;
+    uint32_t shader_states_size;
+    uint32_t shader_state_count = 0;
     uint32_t i;
     BOOL valid;
 
@@ -239,10 +364,13 @@ AROS_LH1(int, VC4ValidateSubmitCL,
         submit->bin_cl_size > VC4_SUBMIT_MAX_STREAM_SIZE ||
         submit->shader_rec_size > VC4_SUBMIT_MAX_STREAM_SIZE ||
         submit->uniforms_size > VC4_SUBMIT_MAX_STREAM_SIZE ||
+        submit->shader_rec_count > VC4_SUBMIT_MAX_SHADER_STATES ||
         submit->shader_rec_count > submit->shader_rec_size / sizeof(uint32_t))
         return VC4_SUBMIT_ERR_INVALID;
 
     handles_size = submit->bo_handle_count * sizeof(uint32_t);
+    shader_states_size = submit->shader_rec_count *
+        sizeof(*shader_states);
     total_size = (uint64_t)submit->bin_cl_size +
         submit->shader_rec_size + submit->uniforms_size + handles_size;
     if (total_size > VC4_SUBMIT_MAX_TOTAL_SIZE)
@@ -260,7 +388,11 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     shader_rec_copy = AllocMem(submit->shader_rec_size, MEMF_PUBLIC);
     uniforms_copy = AllocMem(submit->uniforms_size, MEMF_PUBLIC);
     handles_copy = AllocMem(handles_size, MEMF_PUBLIC);
-    if (!bin_cl_copy || !shader_rec_copy || !uniforms_copy || !handles_copy)
+    if (shader_states_size)
+        shader_states = AllocMem(shader_states_size,
+            MEMF_PUBLIC | MEMF_CLEAR);
+    if (!bin_cl_copy || !shader_rec_copy || !uniforms_copy || !handles_copy ||
+        (shader_states_size && !shader_states))
     {
         valid = FALSE;
         goto cleanup;
@@ -297,7 +429,14 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     {
         valid = vc4_submit_bin_cl_valid(bin_cl_copy,
             submit->bin_cl_size, submit->bo_handle_count,
-            submit->shader_rec_count);
+            submit->shader_rec_count, shader_states, &shader_state_count);
+    }
+
+    if (valid)
+    {
+        valid = vc4_submit_shader_recs_valid(VC4Base, shader_rec_copy,
+            submit->shader_rec_size, handles, submit->bo_handle_count,
+            shader_states, shader_state_count);
     }
 
     if (valid)
@@ -320,6 +459,8 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     ReleaseSemaphore(&VC4Base->vc4_Lock);
 
 cleanup:
+    if (shader_states)
+        FreeMem(shader_states, shader_states_size);
     if (handles_copy)
         FreeMem(handles_copy, handles_size);
     if (uniforms_copy)

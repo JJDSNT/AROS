@@ -297,6 +297,10 @@ O build completo precisa dos submódulos. Um exemplo é
   com comprimentos, ordem de configuração/início, terminação obrigatória,
   referências de BO/shader e leitura little-endian explícita validadas antes
   de qualquer futura execução.
+- shader records: formatos normal/extended, tabelas de hindices, offsets dos
+  três shaders e limites de todos os atributos são validados contra os BOs;
+  BOs de shader e de dados agora possuem tipos distintos. A validação das
+  instruções QPU e dos uniforms continua pendente e a execução segue bloqueada.
 
 ## Referências locais consultadas
 

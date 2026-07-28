@@ -96,7 +96,8 @@ AROS_LH4(int, VC4CreateBO,
     uint32_t firmware_handle;
     uint32_t bus_address;
 
-    if (!handle || size == 0)
+    if (!handle || size == 0 ||
+        (flags & ~(VC4_BOF_NOINIT | VC4_BOF_SHADER)) != 0)
         return -1;
 
     if (alignment == 0)
@@ -135,6 +136,7 @@ AROS_LH4(int, VC4CreateBO,
     bo->bo_FirmwareHandle = firmware_handle;
     bo->bo_BusAddress = bus_address;
     bo->bo_Size = size;
+    bo->bo_Flags = flags;
     bo->bo_CPUAddress = (APTR)(IPTR)(bus_address & 0x3fffffffU);
     AddTail(&VC4Base->vc4_BOs, &bo->bo_Node);
     *handle = bo->bo_Handle;

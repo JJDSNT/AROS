@@ -968,6 +968,27 @@ Essa etapa identifica as referências que precisarão de relocation, mas ainda
 não altera a command list nem calcula endereços de barramento. O autoteste foi
 atualizado para enviar a sequência mínima válida de quatro pacotes.
 
+Os `GL_SHADER_STATE` decodificados agora alimentam uma segunda passagem sobre
+o snapshot de shader records. Para cada estado ela:
+
+- interpreta os formatos normal e extended usados pelo VC4;
+- calcula a quantidade de atributos, o tamanho do record e sua tabela de
+  relocations;
+- valida os hindices dos três shaders e de todos os vertex buffers;
+- exige offset zero para FS, VS e CS, como o ABI do Mesa 20.0.8;
+- acompanha o maior índice usado pelas primitivas;
+- prova que `offset + tamanho + índice * stride` cabe no BO de atributo;
+- aceita no máximo 15 bytes finais de padding, somente se forem zero;
+- limita os metadados auxiliares a 65.536 shader states.
+
+`VC4CreateBO` ganhou a marca `VC4_BOF_SHADER`. A fachada usa essa marca em
+`CREATE_SHADER_BO`, e a validação impede misturar shader BOs e BOs de dados
+nos shader records. Flags desconhecidas de criação de BO agora falham.
+
+Ainda falta validar as instruções QPU dentro dos três shader BOs. Portanto,
+um BO estar marcado como shader e ter tamanho suficiente não o torna seguro
+para execução; `SUBMIT_CL` continua terminando em `NOT_IMPLEMENTED`.
+
 `vc4.resource` passou para aproximadamente 16.8 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
@@ -977,7 +998,7 @@ compilam sem símbolos indefinidos.
 Substituir progressivamente o screen de sondagem pelo `vc4_screen.c` real. O
 próximo subconjunto deve aprofundar a validação sem executar:
 
-- validar o conteúdo e os tamanhos dos shader records;
+- portar o validador de instruções QPU dos shader BOs;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;
 - manter execução desativada até existir uma lista validada e relocada.

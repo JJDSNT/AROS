@@ -17,6 +17,7 @@ struct VC4BO
     uint32_t bo_FirmwareHandle;
     uint32_t bo_BusAddress;
     uint32_t bo_Size;
+    uint32_t bo_Flags;
     APTR bo_CPUAddress;
 };
 

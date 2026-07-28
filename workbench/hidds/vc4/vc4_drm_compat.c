@@ -32,7 +32,8 @@ vc4_drm_create_shader_bo(struct vc4_drm_create_shader_bo *create)
     if (!create || !create->data || !create->size || create->flags != 0)
         return -1;
 
-    error = VC4CreateBO(create->size, 4096, VC4_BOF_NOINIT,
+    error = VC4CreateBO(create->size, 4096,
+        VC4_BOF_NOINIT | VC4_BOF_SHADER,
         &create->handle);
     if (error)
         return error;
