@@ -73,6 +73,14 @@ static uint64_t vc4_read_le64(const uint8_t *bytes)
         ((uint64_t)vc4_read_le32(bytes + 4) << 32);
 }
 
+static void vc4_write_le32(uint8_t *bytes, uint32_t value)
+{
+    bytes[0] = (uint8_t)value;
+    bytes[1] = (uint8_t)(value >> 8);
+    bytes[2] = (uint8_t)(value >> 16);
+    bytes[3] = (uint8_t)(value >> 24);
+}
+
 /*
  * First conservative QPU pass.  This mirrors the upstream termination,
  * signal, branch-boundary and immediately dangerous write checks.  It is not
@@ -505,11 +513,14 @@ static uint32_t vc4_bin_packet_size(uint8_t opcode)
 static BOOL vc4_submit_bin_cl_valid(struct VC4Base *VC4Base,
     const uint8_t *cl, uint32_t size, const uint32_t *handles,
     uint32_t bo_count, uint32_t shader_rec_count,
-    struct VC4SubmitShaderState *states, uint32_t *state_count)
+    struct VC4SubmitShaderState *states, uint32_t *state_count,
+    uint8_t *validated_cl, uint32_t *validated_size)
 {
     uint32_t offset = 0;
+    uint32_t destination_offset = 0;
     uint32_t packet_size;
     uint32_t shader_states = 0;
+    uint32_t i;
     uint32_t bo_index[2] = { UINT32_MAX, UINT32_MAX };
     BOOL found_config = FALSE;
     BOOL found_start = FALSE;
@@ -523,6 +534,11 @@ static BOOL vc4_submit_bin_cl_valid(struct VC4Base *VC4Base,
         packet_size = vc4_bin_packet_size(opcode);
         if (!packet_size || packet_size > size - offset)
             return FALSE;
+        if (opcode != VC4_PACKET_GEM_HANDLES)
+        {
+            CopyMem(cl + offset, validated_cl + destination_offset,
+                packet_size);
+        }
 
         switch (opcode)
         {
@@ -532,6 +548,12 @@ static BOOL vc4_submit_bin_cl_valid(struct VC4Base *VC4Base,
                     (cl[offset + 15] & ((1U << 7) | (1U << 1))) != 0)
                     return FALSE;
                 found_config = TRUE;
+                /*
+                 * Tile allocation/state addresses are resource-owned and
+                 * will be filled only after their BO exists.
+                 */
+                for (i = 1; i <= 12; i++)
+                    validated_cl[destination_offset + i] = 0;
                 break;
 
             case VC4_PACKET_START_TILE_BINNING:
@@ -566,6 +588,8 @@ static BOOL vc4_submit_bin_cl_valid(struct VC4Base *VC4Base,
                 states[shader_states].pointer_bits =
                     (uint8_t)vc4_read_le32(cl + offset + 1);
                 states[shader_states].max_index = 0;
+                vc4_write_le32(validated_cl + destination_offset + 1,
+                    states[shader_states].pointer_bits);
                 shader_states++;
                 break;
 
@@ -591,6 +615,8 @@ static BOOL vc4_submit_bin_cl_valid(struct VC4Base *VC4Base,
                     (uint64_t)index_bo->bo_BusAddress + index_offset >
                         UINT32_MAX)
                     return FALSE;
+                vc4_write_le32(validated_cl + destination_offset + 6,
+                    index_bo->bo_BusAddress + index_offset);
                 if (vc4_read_le32(cl + offset + 10) >
                     states[shader_states - 1].max_index)
                     states[shader_states - 1].max_index =
@@ -621,9 +647,12 @@ static BOOL vc4_submit_bin_cl_valid(struct VC4Base *VC4Base,
         }
 
         offset += packet_size;
+        if (opcode != VC4_PACKET_GEM_HANDLES)
+            destination_offset += packet_size;
     }
 
     *state_count = shader_states;
+    *validated_size = destination_offset;
     return found_config && found_start && found_increment && found_flush;
 }
 
@@ -798,11 +827,13 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     APTR shader_rec_copy = NULL;
     APTR uniforms_copy = NULL;
     APTR handles_copy = NULL;
+    APTR validated_bin_cl = NULL;
     struct VC4SubmitShaderState *shader_states = NULL;
     uint64_t total_size;
     uint32_t handles_size;
     uint32_t shader_states_size;
     uint32_t shader_state_count = 0;
+    uint32_t validated_bin_cl_size = 0;
     uint32_t i;
     BOOL valid;
 
@@ -844,10 +875,13 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     shader_rec_copy = AllocMem(submit->shader_rec_size, MEMF_PUBLIC);
     uniforms_copy = AllocMem(submit->uniforms_size, MEMF_PUBLIC);
     handles_copy = AllocMem(handles_size, MEMF_PUBLIC);
+    validated_bin_cl = AllocMem(submit->bin_cl_size,
+        MEMF_PUBLIC | MEMF_CLEAR);
     if (shader_states_size)
         shader_states = AllocMem(shader_states_size,
             MEMF_PUBLIC | MEMF_CLEAR);
     if (!bin_cl_copy || !shader_rec_copy || !uniforms_copy || !handles_copy ||
+        !validated_bin_cl ||
         (shader_states_size && !shader_states))
     {
         valid = FALSE;
@@ -885,7 +919,11 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     {
         valid = vc4_submit_bin_cl_valid(VC4Base, bin_cl_copy,
             submit->bin_cl_size, handles, submit->bo_handle_count,
-            submit->shader_rec_count, shader_states, &shader_state_count);
+            submit->shader_rec_count, shader_states, &shader_state_count,
+            validated_bin_cl, &validated_bin_cl_size);
+        if (valid && (!validated_bin_cl_size ||
+            validated_bin_cl_size > submit->bin_cl_size))
+            valid = FALSE;
     }
 
     if (valid)
@@ -916,6 +954,8 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     ReleaseSemaphore(&VC4Base->vc4_Lock);
 
 cleanup:
+    if (validated_bin_cl)
+        FreeMem(validated_bin_cl, submit->bin_cl_size);
     if (shader_states)
         FreeMem(shader_states, shader_states_size);
     if (handles_copy)

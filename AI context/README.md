@@ -328,6 +328,9 @@ O build completo precisa dos submódulos. Um exemplo é
 - index buffers: offset, quantidade e índice U8/U16 são validados em 64 bits
   contra o BO selecionado por `GEM_HANDLES`. Somas futuras com o endereço de
   barramento também são verificadas para index, vertex e texture BOs.
+- bin CL compactada: uma segunda cópia privada omite `GEM_HANDLES`, recebe a
+  relocation do index buffer e neutraliza endereços de tile/shader ainda não
+  resolvidos. Ela é descartada sem execução ao final da validação.
 
 ## Referências locais consultadas
 

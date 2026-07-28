@@ -1090,7 +1090,21 @@ também verificam que `bus_address + offset` é representável em 32 bits. Esta
 etapa valida tudo que é necessário para calcular essas relocations, mas ainda
 não escreve os endereços no snapshot privado.
 
-`vc4.resource` passou para aproximadamente 20.7 KiB e define o vetor
+O decoder agora produz uma segunda bin CL privada. Cada pacote de hardware é
+copiado para ela enquanto os pseudo-pacotes `GEM_HANDLES` são consumidos, mas
+não emitidos. A relocation do index buffer é escrita little-endian somente
+nessa cópia.
+
+Os três campos de endereço/tamanho de `TILE_BINNING_MODE_CONFIG` são zerados,
+pois deverão apontar para um BO interno ainda não criado. `GL_SHADER_STATE`
+preserva somente os quatro bits de formato/quantidade de atributos enquanto o
+endereço fica zero até existir uma shader-record CL privada relocada.
+
+A cópia compactada e seu tamanho são descartados ao final da validação e nunca
+executados. Assim, esta etapa exercita a transformação sem introduzir lifetime
+ou acesso ao V3D prematuramente.
+
+`vc4.resource` passou para aproximadamente 21.1 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 
@@ -1101,8 +1115,8 @@ próximo subconjunto deve aprofundar a validação sem executar:
 
 - completar o validador QPU com clamps, basic blocks, modo TMU direto e VPM;
 - validar P0-P3 e os limites físicos de cada texture BO;
-- criar uma bin CL privada compactada, removendo `GEM_HANDLES`;
-- escrever relocations somente nessa cópia privada;
+- criar cópias privadas relocadas dos shader records e uniforms;
+- criar o BO interno de tile allocation/state;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;
 - manter execução desativada até existir uma lista validada e relocada.
