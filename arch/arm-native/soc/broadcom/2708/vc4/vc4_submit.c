@@ -15,10 +15,171 @@
 #define VC4_SUBMIT_MAX_BO_HANDLES  65536U
 #define VC4_SUBMIT_VALID_FLAGS     0x0fU
 
+enum VC4BinPacket
+{
+    VC4_PACKET_HALT = 0,
+    VC4_PACKET_NOP = 1,
+    VC4_PACKET_FLUSH = 4,
+    VC4_PACKET_FLUSH_ALL = 5,
+    VC4_PACKET_START_TILE_BINNING = 6,
+    VC4_PACKET_INCREMENT_SEMAPHORE = 7,
+    VC4_PACKET_GL_INDEXED_PRIMITIVE = 32,
+    VC4_PACKET_GL_ARRAY_PRIMITIVE = 33,
+    VC4_PACKET_PRIMITIVE_LIST_FORMAT = 56,
+    VC4_PACKET_GL_SHADER_STATE = 64,
+    VC4_PACKET_CONFIGURATION_BITS = 96,
+    VC4_PACKET_FLAT_SHADE_FLAGS = 97,
+    VC4_PACKET_POINT_SIZE = 98,
+    VC4_PACKET_LINE_WIDTH = 99,
+    VC4_PACKET_RHT_X_BOUNDARY = 100,
+    VC4_PACKET_DEPTH_OFFSET = 101,
+    VC4_PACKET_CLIP_WINDOW = 102,
+    VC4_PACKET_VIEWPORT_OFFSET = 103,
+    VC4_PACKET_CLIPPER_XY_SCALING = 105,
+    VC4_PACKET_CLIPPER_Z_SCALING = 106,
+    VC4_PACKET_TILE_BINNING_MODE_CONFIG = 112,
+    VC4_PACKET_GEM_HANDLES = 254
+};
+
 _Static_assert(sizeof(struct VC4SubmitRCLSurface) == 12,
     "VC4 submit surface ABI mismatch");
 _Static_assert(sizeof(struct VC4SubmitCL) == 176,
     "VC4 submit ABI mismatch");
+
+static uint32_t vc4_read_le32(const uint8_t *bytes)
+{
+    return (uint32_t)bytes[0] |
+        ((uint32_t)bytes[1] << 8) |
+        ((uint32_t)bytes[2] << 16) |
+        ((uint32_t)bytes[3] << 24);
+}
+
+static uint32_t vc4_bin_packet_size(uint8_t opcode)
+{
+    switch (opcode)
+    {
+        case VC4_PACKET_HALT:
+        case VC4_PACKET_NOP:
+        case VC4_PACKET_FLUSH:
+        case VC4_PACKET_FLUSH_ALL:
+        case VC4_PACKET_START_TILE_BINNING:
+        case VC4_PACKET_INCREMENT_SEMAPHORE:
+            return 1;
+        case VC4_PACKET_PRIMITIVE_LIST_FORMAT:
+            return 2;
+        case VC4_PACKET_RHT_X_BOUNDARY:
+            return 3;
+        case VC4_PACKET_CONFIGURATION_BITS:
+            return 4;
+        case VC4_PACKET_GL_SHADER_STATE:
+        case VC4_PACKET_FLAT_SHADE_FLAGS:
+        case VC4_PACKET_POINT_SIZE:
+        case VC4_PACKET_LINE_WIDTH:
+        case VC4_PACKET_DEPTH_OFFSET:
+        case VC4_PACKET_VIEWPORT_OFFSET:
+            return 5;
+        case VC4_PACKET_CLIP_WINDOW:
+        case VC4_PACKET_CLIPPER_XY_SCALING:
+        case VC4_PACKET_CLIPPER_Z_SCALING:
+        case VC4_PACKET_GEM_HANDLES:
+            return 9;
+        case VC4_PACKET_GL_ARRAY_PRIMITIVE:
+            return 10;
+        case VC4_PACKET_GL_INDEXED_PRIMITIVE:
+            return 14;
+        case VC4_PACKET_TILE_BINNING_MODE_CONFIG:
+            return 16;
+        default:
+            return 0;
+    }
+}
+
+/*
+ * Decode the untrusted BCL without following any address embedded in it.
+ * The command stream is always little-endian, independently of the CPU
+ * byte order used by a possible future AROS target.
+ */
+static BOOL vc4_submit_bin_cl_valid(const uint8_t *cl, uint32_t size,
+    uint32_t bo_count, uint32_t shader_rec_count)
+{
+    uint32_t offset = 0;
+    uint32_t packet_size;
+    uint32_t shader_states = 0;
+    uint32_t bo_index[2] = { UINT32_MAX, UINT32_MAX };
+    BOOL found_config = FALSE;
+    BOOL found_start = FALSE;
+    BOOL found_increment = FALSE;
+    BOOL found_flush = FALSE;
+
+    while (offset < size)
+    {
+        uint8_t opcode = cl[offset];
+
+        packet_size = vc4_bin_packet_size(opcode);
+        if (!packet_size || packet_size > size - offset)
+            return FALSE;
+
+        switch (opcode)
+        {
+            case VC4_PACKET_TILE_BINNING_MODE_CONFIG:
+                if (found_config || cl[offset + 13] == 0 ||
+                    cl[offset + 14] == 0 ||
+                    (cl[offset + 15] & ((1U << 7) | (1U << 1))) != 0)
+                    return FALSE;
+                found_config = TRUE;
+                break;
+
+            case VC4_PACKET_START_TILE_BINNING:
+                if (found_start || !found_config)
+                    return FALSE;
+                found_start = TRUE;
+                break;
+
+            case VC4_PACKET_INCREMENT_SEMAPHORE:
+                if (offset != size - 2)
+                    return FALSE;
+                found_increment = TRUE;
+                break;
+
+            case VC4_PACKET_FLUSH:
+                if (offset != size - 1)
+                    return FALSE;
+                found_flush = TRUE;
+                break;
+
+            case VC4_PACKET_GEM_HANDLES:
+                bo_index[0] = vc4_read_le32(cl + offset + 1);
+                bo_index[1] = vc4_read_le32(cl + offset + 5);
+                if (bo_index[0] >= bo_count || bo_index[1] >= bo_count)
+                    return FALSE;
+                break;
+
+            case VC4_PACKET_GL_SHADER_STATE:
+                if ((vc4_read_le32(cl + offset + 1) & ~0x0fU) != 0 ||
+                    shader_states >= shader_rec_count)
+                    return FALSE;
+                shader_states++;
+                break;
+
+            case VC4_PACKET_GL_INDEXED_PRIMITIVE:
+                if (!shader_states || bo_index[0] >= bo_count)
+                    return FALSE;
+                break;
+
+            case VC4_PACKET_GL_ARRAY_PRIMITIVE:
+                if (!shader_states)
+                    return FALSE;
+                break;
+
+            case VC4_PACKET_HALT:
+                return FALSE;
+        }
+
+        offset += packet_size;
+    }
+
+    return found_config && found_start && found_increment && found_flush;
+}
 
 static BOOL vc4_submit_range_valid(uint64_t pointer, uint32_t size,
     uint32_t alignment)
@@ -130,6 +291,13 @@ AROS_LH1(int, VC4ValidateSubmitCL,
             valid = FALSE;
             break;
         }
+    }
+
+    if (valid)
+    {
+        valid = vc4_submit_bin_cl_valid(bin_cl_copy,
+            submit->bin_cl_size, submit->bo_handle_count,
+            submit->shader_rec_count);
     }
 
     if (valid)

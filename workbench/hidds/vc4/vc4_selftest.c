@@ -201,7 +201,17 @@ done:
 static bool vc4_selftest_submit_validation(struct pipe_resource *resource)
 {
     struct vc4_resource *rsc = vc4_resource(resource);
-    uint32_t bin_cl = 0;
+    union {
+        uint32_t words[5];
+        uint8_t bytes[20];
+    } bin_cl = { .bytes = {
+        VC4_PACKET_TILE_BINNING_MODE_CONFIG,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        1, 1, 0,
+        VC4_PACKET_START_TILE_BINNING,
+        VC4_PACKET_INCREMENT_SEMAPHORE,
+        VC4_PACKET_FLUSH
+    } };
     uint32_t shader_rec = 0;
     uint32_t uniforms = 0;
     uint32_t handles[1] = { rsc->bo->handle };
@@ -210,11 +220,11 @@ static bool vc4_selftest_submit_validation(struct pipe_resource *resource)
         .hindex = UINT32_MAX
     };
 
-    submit.bin_cl = (uint64_t)(IPTR)&bin_cl;
+    submit.bin_cl = (uint64_t)(IPTR)bin_cl.bytes;
     submit.shader_rec = (uint64_t)(IPTR)&shader_rec;
     submit.uniforms = (uint64_t)(IPTR)&uniforms;
     submit.bo_handles = (uint64_t)(IPTR)handles;
-    submit.bin_cl_size = sizeof(bin_cl);
+    submit.bin_cl_size = 19;
     submit.shader_rec_size = sizeof(shader_rec);
     submit.shader_rec_count = 1;
     submit.uniforms_size = sizeof(uniforms);

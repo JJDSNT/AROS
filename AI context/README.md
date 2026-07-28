@@ -293,6 +293,10 @@ O build completo precisa dos submódulos. Um exemplo é
 - snapshots de submissão: bin CL, shader records, uniforms e handles são
   copiados para até 32 MiB de memória do recurso antes da resolução, sem
   reter ponteiros do caller.
+- decoder estrutural de bin CL: somente o subconjunto VC4 permitido é aceito,
+  com comprimentos, ordem de configuração/início, terminação obrigatória,
+  referências de BO/shader e leitura little-endian explícita validadas antes
+  de qualquer futura execução.
 
 ## Referências locais consultadas
 

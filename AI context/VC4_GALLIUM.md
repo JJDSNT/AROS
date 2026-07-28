@@ -949,7 +949,26 @@ O autoteste opt-in monta uma submissão mínima com um BO real. A estrutura
 válida deve alcançar `NOT_IMPLEMENTED`; ao substituir o handle por
 `UINT32_MAX`, deve receber `INVALID`. Esse caminho habilitado compilou.
 
-`vc4.resource` passou para aproximadamente 15.5 KiB e define o vetor
+O snapshot da bin CL agora é decodificado pacote a pacote antes de aceitar a
+submissão. O decoder:
+
+- aceita somente o subconjunto usado pelo validador VC4 do Mesa 20.0.8;
+- valida o tamanho fixo de cada pacote sem avançar além do snapshot;
+- rejeita opcode desconhecido, `HALT` e pacotes de renderização no BCL;
+- exige uma única configuração de binning antes de `START_TILE_BINNING`;
+- rejeita dimensões de tile nulas e os modos unsupported DB/non-MS e 64-bit;
+- exige `INCREMENT_SEMAPHORE` e `FLUSH` nas duas últimas posições;
+- decodifica os campos de 32 bits explicitamente como little-endian;
+- valida os dois índices do pseudo-pacote `GEM_HANDLES`;
+- exige shader state antes de primitivas e um BO selecionado antes de
+  primitivas indexadas;
+- limita referências de shader record à quantidade declarada.
+
+Essa etapa identifica as referências que precisarão de relocation, mas ainda
+não altera a command list nem calcula endereços de barramento. O autoteste foi
+atualizado para enviar a sequência mínima válida de quatro pacotes.
+
+`vc4.resource` passou para aproximadamente 16.8 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 
@@ -958,9 +977,9 @@ compilam sem símbolos indefinidos.
 Substituir progressivamente o screen de sondagem pelo `vc4_screen.c` real. O
 próximo subconjunto deve aprofundar a validação sem executar:
 
-- decodificar a bin CL pacote por pacote;
-- rejeitar opcodes desconhecidos e comprimentos inválidos;
-- identificar relocations para shader records/uniforms/BOs;
+- validar o conteúdo e os tamanhos dos shader records;
+- validar uniforms e referências de textura;
+- produzir uma command list privada relocada;
 - manter execução desativada até existir uma lista validada e relocada.
 
 ## Referências locais
