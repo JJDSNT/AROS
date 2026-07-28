@@ -227,6 +227,81 @@ static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo,
     return FALSE;
 }
 
+static BOOL vc4_submit_qpu_textures_valid(struct VC4Base *VC4Base,
+    const struct VC4BO *shader, const uint8_t *texture_handles,
+    uint32_t texture_count, const uint8_t *uniform_data,
+    uint32_t uniform_data_size, const uint32_t *handles,
+    uint32_t handle_count)
+{
+    const uint8_t *code = shader->bo_CPUAddress;
+    uint32_t instructions = shader->bo_LogicalSize / sizeof(uint64_t);
+    uint32_t offsets[2][4];
+    uint8_t counts[2] = { 0, 0 };
+    uint32_t uniform_offset = 0;
+    uint32_t sample = 0;
+    uint32_t end_ip = UINT32_MAX;
+    uint32_t ip;
+
+    for (ip = 0; ip < instructions; ip++)
+    {
+        uint64_t instruction = vc4_read_le64(code + ip * 8U);
+        uint32_t signal = (uint32_t)(instruction >> 60);
+        uint32_t waddr_add = (uint32_t)((instruction >> 38) & 0x3fU);
+        uint32_t waddr_mul = (uint32_t)((instruction >> 32) & 0x3fU);
+        uint32_t raddr_a = (uint32_t)((instruction >> 18) & 0x3fU);
+        uint32_t raddr_b = (uint32_t)((instruction >> 12) & 0x3fU);
+        uint32_t waddr = (waddr_add >= 56 && waddr_add <= 63) ?
+            waddr_add : waddr_mul;
+
+        if (waddr >= 56 && waddr <= 63)
+        {
+            uint32_t tmu = waddr >= 60 ? 1U : 0U;
+            BOOL submit_sample = waddr == 56 || waddr == 60;
+
+            if (counts[tmu] >= 4 ||
+                uniform_data_size - uniform_offset < sizeof(uint32_t))
+                return FALSE;
+            offsets[tmu][counts[tmu]++] = uniform_offset;
+            uniform_offset += sizeof(uint32_t);
+
+            if (submit_sample)
+            {
+                uint32_t hindex;
+                uint32_t p0;
+                struct VC4BO *texture_bo;
+
+                if (counts[tmu] < 2 || sample >= texture_count)
+                    return FALSE;
+                hindex = vc4_read_le32(texture_handles +
+                    sample * sizeof(uint32_t));
+                if (hindex >= handle_count)
+                    return FALSE;
+                texture_bo = vc4_find_bo(VC4Base, handles[hindex]);
+                p0 = vc4_read_le32(uniform_data + offsets[tmu][0]);
+                if (!texture_bo || (p0 & 0xfffff000U) >=
+                    texture_bo->bo_Size)
+                    return FALSE;
+                counts[tmu] = 0;
+                sample++;
+            }
+        }
+
+        if (signal != 14 &&
+            (raddr_a == 32 || (signal != 13 && raddr_b == 32)))
+        {
+            if (uniform_data_size - uniform_offset < sizeof(uint32_t))
+                return FALSE;
+            uniform_offset += sizeof(uint32_t);
+        }
+        if (signal == 3)
+            end_ip = ip + 2U;
+        if (ip == end_ip)
+            break;
+    }
+
+    return sample == texture_count && uniform_offset == uniform_data_size;
+}
+
 static uint32_t vc4_bin_packet_size(uint8_t opcode)
 {
     switch (opcode)
@@ -452,6 +527,12 @@ static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
                         (texture_bo->bo_Flags & VC4_BOF_SHADER))
                         return FALSE;
                 }
+                if (!vc4_submit_qpu_textures_valid(VC4Base, bo,
+                    uniforms + uniform_offset, qpu.texture_count,
+                    uniforms + uniform_offset +
+                        qpu.texture_count * sizeof(uint32_t),
+                    qpu.uniform_data_bytes, handles, handle_count))
+                    return FALSE;
                 uniform_offset += (uint32_t)shader_uniform_bytes;
             }
             else

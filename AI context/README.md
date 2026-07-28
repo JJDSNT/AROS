@@ -315,8 +315,12 @@ O build completo precisa dos submódulos. Um exemplo é
   blocks estar completa.
 - hindices de textura: a organização `[handles][uniform data]` de cada shader
   é percorrida no snapshot, cada referência é resolvida e shader BOs são
-  proibidos como textura. A interpretação de P0-P3 e os bounds da imagem
-  continuam pendentes.
+  proibidos como textura. A interpretação completa de P0-P3 e os bounds da
+  imagem continuam pendentes.
+- P0/P1 inicial: os offsets dos parâmetros são reconstruídos diretamente dos
+  writes TMU, P0/P1 são obrigatórios e o endereço-base P0 deve cair dentro do
+  texture BO. Formato, dimensões, tiling e mip levels ainda não entram no
+  cálculo completo de bounds.
 
 ## Referências locais consultadas
 

@@ -1047,11 +1047,18 @@ submissão e resolvido sob o lock de `vc4.resource`. BOs ausentes ou marcados
 como shader não podem ser usados como textura. Ao final, só são tolerados até
 15 bytes de padding zero; dados extras não interpretados são rejeitados.
 
-Ainda não são interpretados os parâmetros P0-P3 das texturas. Portanto,
-dimensões, tiling, mip levels e o intervalo final acessado no texture BO
-continuam pendentes.
+Uma segunda passagem QPU agora reconstrói os offsets P0-P3 de cada amostra na
+ordem exata em que os writes TMU consomem uniforms. Ela exige pelo menos P0 e
+P1, associa a amostra ao hindex correspondente e valida que o offset-base de
+P0, alinhado a 4 KiB pelo formato VC4, esteja dentro do BO resolvido. A
+passagem também comprova que a quantidade de amostras e todos os bytes
+consumidos coincidem com o resultado da primeira análise QPU.
 
-`vc4.resource` passou para aproximadamente 19.0 KiB e define o vetor
+Esta é apenas a primeira parte de `reloc_tex()` upstream: P1 já precisa estar
+presente, mas seus campos de largura, altura e tipo ainda não são usados para
+calcular o último byte acessível. Nenhuma relocation é escrita.
+
+`vc4.resource` passou para aproximadamente 19.7 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 
