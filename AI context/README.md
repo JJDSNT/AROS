@@ -307,8 +307,12 @@ O build completo precisa dos submódulos. Um exemplo é
   etapa ainda não autoriza execução.
 - uniforms/threading QPU: leituras diretas produzem um limite inferior
   confrontado com o stream de uniforms; regras de delay entre thread switches
-  e uso da metade superior dos registradores também são verificadas. TMU e
-  resets do endereço de uniforms ainda não fazem parte da prova.
+  e uso da metade superior dos registradores também são verificadas. Resets do
+  endereço de uniforms e o modo TMU direto ainda não fazem parte da prova.
+- TMU conservador: sequências das duas unidades, limite de quatro parâmetros,
+  hindices de textura e consumo de uniforms são rastreados. TMU direto e sua
+  combinação com branches ficam rejeitados até a análise de clamps/basic
+  blocks estar completa.
 
 ## Referências locais consultadas
 

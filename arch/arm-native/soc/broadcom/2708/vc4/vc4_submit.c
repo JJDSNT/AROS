@@ -84,6 +84,9 @@ static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo,
     int32_t last_thread_switch = -3;
     BOOL threaded = FALSE;
     BOOL upper_registers = FALSE;
+    BOOL saw_branch = FALSE;
+    BOOL saw_tmu = FALSE;
+    uint8_t tmu_write_count[2] = { 0, 0 };
 
     if (!uniform_bytes || !bo || !(bo->bo_Flags & VC4_BOF_SHADER) ||
         !bo->bo_CPUAddress || bo->bo_LogicalSize < 3U * sizeof(uint64_t) ||
@@ -117,17 +120,55 @@ static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo,
                 ip + 4U >= instructions ||
                 (int32_t)ip < last_thread_switch + 3)
                 return FALSE;
+            if (saw_tmu || tmu_write_count[0] || tmu_write_count[1])
+                return FALSE;
+            saw_branch = TRUE;
             target = (int64_t)ip + 4 + branch_offset / 8;
             if (target < 0 || target >= instructions)
                 return FALSE;
         }
         else
         {
+            BOOL add_writes_tmu = waddr_add >= 56 && waddr_add <= 63;
+            BOOL mul_writes_tmu = waddr_mul >= 56 && waddr_mul <= 63;
+
             if (waddr_add == 36 || waddr_add == 38 ||
                 waddr_add == 47 || waddr_add == 50 || waddr_add == 51 ||
                 waddr_mul == 36 || waddr_mul == 38 ||
                 waddr_mul == 47 || waddr_mul == 50 || waddr_mul == 51)
                 return FALSE;
+
+            if (add_writes_tmu && mul_writes_tmu)
+                return FALSE;
+            if (add_writes_tmu || mul_writes_tmu)
+            {
+                uint32_t waddr = add_writes_tmu ? waddr_add : waddr_mul;
+                uint32_t tmu = waddr >= 60 ? 1U : 0U;
+                BOOL submit_sample = waddr == 56 || waddr == 60;
+
+                /*
+                 * Direct TMU submission needs the upstream MIN/MAX clamp
+                 * proof.  Reject it until that data-flow pass is ported.
+                 */
+                if (saw_branch ||
+                    (submit_sample && tmu_write_count[tmu] == 0) ||
+                    tmu_write_count[tmu] >= 4 ||
+                    raddr_a == 32 || (signal != 13 && raddr_b == 32))
+                    return FALSE;
+                saw_tmu = TRUE;
+                tmu_write_count[tmu]++;
+                if (uniforms > UINT32_MAX - sizeof(uint32_t))
+                    return FALSE;
+                uniforms += sizeof(uint32_t);
+                if (submit_sample)
+                {
+                    /* One hindex precedes each texture sample's uniforms. */
+                    if (uniforms > UINT32_MAX - sizeof(uint32_t))
+                        return FALSE;
+                    uniforms += sizeof(uint32_t);
+                    tmu_write_count[tmu] = 0;
+                }
+            }
 
             if ((waddr_add >= 16 && waddr_add < 32) ||
                 (waddr_mul >= 16 && waddr_mul < 32))
@@ -139,7 +180,8 @@ static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo,
 
             if (signal == 2 || signal == 6)
             {
-                if ((int32_t)ip < last_thread_switch + 3)
+                if ((int32_t)ip < last_thread_switch + 3 ||
+                    tmu_write_count[0] || tmu_write_count[1])
                     return FALSE;
                 threaded = TRUE;
                 last_thread_switch = (int32_t)ip;
@@ -161,7 +203,8 @@ static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo,
 
         if (signal == 3)
         {
-            if (ip + 2U >= instructions)
+            if (ip + 2U >= instructions ||
+                tmu_write_count[0] || tmu_write_count[1])
                 return FALSE;
             end_ip = ip + 2U;
         }

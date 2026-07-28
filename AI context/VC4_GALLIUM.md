@@ -1023,6 +1023,17 @@ portadas: switches precisam estar separados pelos delay slots, branches não
 podem ocorrer dentro deles e um shader threaded não pode usar a metade
 superior dos register files.
 
+O estado das duas TMUs agora é acompanhado separadamente. Cada sequência pode
+ter no máximo quatro parâmetros antes do write de submissão em `S`; uma
+sequência incompleta não pode atravessar branch, thread switch ou `PROG_END`.
+Os parâmetros implícitos e o hindex de textura são incluídos no mínimo exigido
+do stream de uniforms. Writes simultâneos pelas pipelines ADD e MUL e leituras
+de uniform no mesmo ciclo da configuração TMU são rejeitados.
+
+O modo TMU direto e shaders que combinam TMU com branches permanecem
+deliberadamente rejeitados. Suportá-los com segurança requer a análise
+upstream de clamps e estados por basic block, que ainda não foi portada.
+
 `vc4.resource` passou para aproximadamente 18.5 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
@@ -1032,7 +1043,7 @@ compilam sem símbolos indefinidos.
 Substituir progressivamente o screen de sondagem pelo `vc4_screen.c` real. O
 próximo subconjunto deve aprofundar a validação sem executar:
 
-- completar o validador QPU com data-flow de uniforms/TMU/VPM;
+- completar o validador QPU com clamps, basic blocks, modo TMU direto e VPM;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;
 - manter execução desativada até existir uma lista validada e relocada.
