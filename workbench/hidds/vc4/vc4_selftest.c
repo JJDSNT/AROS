@@ -237,6 +237,7 @@ static bool vc4_selftest_submit_validation(struct pipe_resource *resource)
     submit.zs_write = absent;
     submit.msaa_color_write = absent;
     submit.msaa_zs_write = absent;
+    submit.color_write.hindex = 0;
 
     if (vc4_drm_ioctl(VC4_DRM_SUBMIT_CL, &submit) !=
         VC4_SUBMIT_ERR_NOT_IMPLEMENTED)

@@ -346,6 +346,9 @@ O build completo precisa dos submódulos. Um exemplo é
 - tile BO: state e allocation são dimensionados pela grade de tiles, separados
   em 4 KiB e ligados ao `TILE_BINNING_MODE_CONFIG`; o BO é zerado e liberado
   sem execução.
+- planejamento RCL: descritores ausentes/presentes, faixa da grade e stores
+  obrigatórios são validados; o tamanho exato por combinação de loads/stores
+  e quantidade de tiles é calculado em 64 bits, ainda sem emissão.
 
 ## Referências locais consultadas
 

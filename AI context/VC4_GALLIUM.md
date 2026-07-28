@@ -1175,7 +1175,26 @@ em 64 bits contra o BO retornado pelo firmware.
 
 O tile BO nasce zerado, não é executado e é liberado junto com o staging BO.
 
-`vc4.resource` passou para aproximadamente 22.8 KiB e define o vetor
+O planejamento da render command list foi iniciado sem emitir comandos. A
+faixa `min/max` solicitada precisa caber na grade de tiles do binning, e os
+seis descritores distinguem estritamente superfície ausente de presente:
+superfícies ausentes exigem offset/bits/flags zero e flags desconhecidas são
+rejeitadas. MSAA write exige bits/flags zero e alinhamento de 16 bytes.
+
+O tamanho exato da futura RCL é calculado em 64 bits a partir de:
+
+- configuração inicial e espera do binner;
+- clear colors opcional;
+- loads color/ZS full-resolution ou general;
+- branch para a sub-lista de cada tile;
+- stores MSAA, ZS e color;
+- coordenadas intermediárias exigidas entre stores.
+
+É obrigatório existir ao menos uma superfície de write. A multiplicação pelo
+número de tiles não pode exceder 32 bits. O resultado ainda não é alocado nem
+emitido; ele estabelece o limite exato para a próxima etapa.
+
+`vc4.resource` passou para aproximadamente 23.4 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 
@@ -1187,7 +1206,7 @@ próximo subconjunto deve aprofundar a validação sem executar:
 - completar o validador QPU com clamps, basic blocks, modo TMU direto e VPM;
 - validar P0-P3 e os limites físicos de cada texture BO;
 - manter o BO vivo em uma estrutura de job validado;
-- construir a render command list privada a partir das superfícies;
+- emitir a render command list privada dentro de um BO dimensionado;
 - criar o BO interno de tile allocation/state;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;

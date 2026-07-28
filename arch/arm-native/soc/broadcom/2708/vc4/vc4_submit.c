@@ -916,6 +916,91 @@ static BOOL vc4_submit_surface_valid(struct VC4Base *VC4Base,
     return bo && surface->offset < bo->bo_Size;
 }
 
+static BOOL vc4_submit_rcl_plan_valid(const struct VC4SubmitCL *submit,
+    const struct VC4BinInfo *bin_info, uint32_t *rcl_size)
+{
+    const struct VC4SubmitRCLSurface *surfaces[6] = {
+        &submit->color_read, &submit->color_write,
+        &submit->zs_read, &submit->zs_write,
+        &submit->msaa_color_write, &submit->msaa_zs_write
+    };
+    uint32_t xtiles = (uint32_t)submit->max_x_tile -
+        submit->min_x_tile + 1U;
+    uint32_t ytiles = (uint32_t)submit->max_y_tile -
+        submit->min_y_tile + 1U;
+    uint32_t loop_size = 3U;
+    uint32_t stores = 0;
+    uint64_t size = 11U + 1U;
+    uint32_t i;
+
+    if (submit->max_x_tile >= bin_info->tiles_x ||
+        submit->max_y_tile >= bin_info->tiles_y)
+        return FALSE;
+
+    for (i = 0; i < 6; i++)
+    {
+        if (surfaces[i]->hindex == UINT32_MAX)
+        {
+            if (surfaces[i]->offset || surfaces[i]->bits ||
+                surfaces[i]->flags)
+                return FALSE;
+        }
+        else if (surfaces[i]->flags & ~1U)
+            return FALSE;
+    }
+
+    if (submit->msaa_color_write.flags ||
+        submit->msaa_color_write.bits ||
+        submit->msaa_zs_write.flags ||
+        submit->msaa_zs_write.bits)
+        return FALSE;
+    if (submit->msaa_color_write.hindex != UINT32_MAX)
+    {
+        if (submit->msaa_color_write.offset & 0xfU)
+            return FALSE;
+        loop_size += 5U;
+        stores++;
+    }
+    if (submit->msaa_zs_write.hindex != UINT32_MAX)
+    {
+        if (submit->msaa_zs_write.offset & 0xfU)
+            return FALSE;
+        loop_size += 5U;
+        stores++;
+    }
+    if (submit->zs_write.hindex != UINT32_MAX)
+    {
+        loop_size += 7U;
+        stores++;
+    }
+    if (submit->color_write.hindex != UINT32_MAX)
+    {
+        loop_size += 1U;
+        stores++;
+    }
+    if (!stores)
+        return FALSE;
+    loop_size += 3U * (stores - 1U);
+
+    if (submit->color_read.hindex != UINT32_MAX)
+        loop_size += (submit->color_read.flags & 1U) ? 5U : 7U;
+    if (submit->zs_read.hindex != UINT32_MAX)
+    {
+        if (submit->color_read.hindex != UINT32_MAX)
+            loop_size += 10U;
+        loop_size += (submit->zs_read.flags & 1U) ? 5U : 7U;
+    }
+    loop_size += 5U; /* branch to the tile's bin sub-list */
+
+    if (submit->flags & VC4_SUBMIT_USE_CLEAR_COLOR)
+        size += 14U + 3U + 7U;
+    size += (uint64_t)xtiles * ytiles * loop_size;
+    if (size > UINT32_MAX)
+        return FALSE;
+    *rcl_size = (uint32_t)size;
+    return TRUE;
+}
+
 AROS_LH1(int, VC4ValidateSubmitCL,
     AROS_LHA(const struct VC4SubmitCL *, submit, A0),
     struct VC4Base *, VC4Base, 6, Vc4)
@@ -950,6 +1035,7 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     uint32_t tile_alloc_offset;
     uint32_t tile_alloc_size;
     uint32_t tile_used_size;
+    uint32_t planned_rcl_size = 0;
     APTR staging_map;
     APTR tile_map;
     struct VC4BinInfo bin_info = { 0 };
@@ -1076,6 +1162,9 @@ AROS_LH1(int, VC4ValidateSubmitCL,
                 handles, submit->bo_handle_count) &&
             vc4_submit_surface_valid(VC4Base, &submit->msaa_zs_write,
                 handles, submit->bo_handle_count);
+        if (valid)
+            valid = vc4_submit_rcl_plan_valid(submit, &bin_info,
+                &planned_rcl_size);
     }
 
     ReleaseSemaphore(&VC4Base->vc4_Lock);
