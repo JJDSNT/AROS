@@ -1,0 +1,41 @@
+include $(SRCDIR)/config/aros.cfg
+include $(SRCDIR)/workbench/libs/mesa/mesa.cfg
+
+# This explicit target is intentionally not part of workbench-hidds yet.
+# Until CreatePipeScreen can return a hardware screen, installing the module
+# would make vc4gfx load a class which only reports the software fallback.
+
+#MM hidd-vc4gallium-skeleton : includes hidd-gallium kernel-vc4-bcm2708-skeleton-includes
+
+FILES := \
+    vc4gallium_init \
+    vc4gallium_class \
+    vc4_drm_compat \
+    vc4_bufmgr_aros \
+    vc4_context_aros \
+    vc4_resource_aros \
+    vc4_selftest \
+    vc4_screen_aros \
+    vc4_tiling_aros \
+    vc4_tiling_lt_aros
+
+USER_INCLUDES += \
+    -iquote $(top_srcdir)/src \
+    -iquote $(top_srcdir)/src/gallium/include \
+    -iquote $(top_srcdir)/src/gallium/auxiliary \
+    -iquote $(top_srcdir)/src/gallium/drivers \
+    -iquote $(top_srcdir)/src/gallium/drivers/vc4 \
+    -iquote $(top_srcdir)/src/compiler \
+    -iquote $(top_srcdir)/src/compiler/nir \
+    -iquote $(top_builddir)/src/compiler/nir
+
+USER_LDFLAGS += \
+    -L$(top_libdir) \
+    -Wl,--start-group -lmesautil -Wl,--end-group
+
+%build_module mmake=hidd-vc4gallium-skeleton \
+    modname=vc4gallium modtype=hidd \
+    files="$(FILES)" \
+    uselibs=""
+
+%common

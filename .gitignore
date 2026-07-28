@@ -3068,3 +3068,6 @@
 # Tracked, hand-written mmakefiles that predate mmakefile.src are unaffected,
 # since .gitignore does not untrack already-committed files.
 mmakefile
+/build-aarch64/
+/build-aarch64-core/
+/toolchain-aarch64/

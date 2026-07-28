@@ -1,0 +1,8 @@
+include $(SRCDIR)/config/aros.cfg
+
+# Explicit until BO allocation, command validation and submission exist.
+#MM kernel-vc4-bcm2708-skeleton : includes kernel-mbox-bcm2708-includes
+
+%build_module mmake=kernel-vc4-bcm2708-skeleton \
+    modname=vc4 modtype=resource \
+    files="vc4_init vc4_bo vc4_submit"

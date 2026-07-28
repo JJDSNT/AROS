@@ -72,6 +72,7 @@
 #define VCTAG_FREEMEM           0x0003000F
 
 #define VCTAG_EXECUTE           0x00030010
+#define VCTAG_ENABLEQPU         0x00030012
 
 #define VCTAG_GETEDID           0x00030020
 
