@@ -349,6 +349,9 @@ O build completo precisa dos submódulos. Um exemplo é
 - planejamento RCL: descritores ausentes/presentes, faixa da grade e stores
   obrigatórios são validados; o tamanho exato por combinação de loads/stores
   e quantidade de tiles é calculado em 64 bits, ainda sem emissão.
+- RCL color mínima: render config, coordenadas, espera, branches por tile e
+  store/EOF são emitidos em um BO próprio para o caminho color-write simples;
+  o BO é sincronizado e liberado sem execução.
 
 ## Referências locais consultadas
 

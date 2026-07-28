@@ -1191,10 +1191,24 @@ O tamanho exato da futura RCL é calculado em 64 bits a partir de:
 - coordenadas intermediárias exigidas entre stores.
 
 É obrigatório existir ao menos uma superfície de write. A multiplicação pelo
-número de tiles não pode exceder 32 bits. O resultado ainda não é alocado nem
-emitido; ele estabelece o limite exato para a próxima etapa.
+número de tiles não pode exceder 32 bits. O resultado estabelece o limite
+exato usado pelos emissores progressivos.
 
-`vc4.resource` passou para aproximadamente 23.4 KiB e define o vetor
+O primeiro emissor RCL cobre o caminho conservador de um único `color_write`,
+sem loads, ZS, MSAA ou clear. Ele cria um BO próprio no tamanho planejado e
+emite little-endian:
+
+- `TILE_RENDERING_MODE_CONFIG` com endereço, dimensões e bits do target;
+- `TILE_COORDINATES` em ordem fixa ou crescente conforme os flags;
+- `WAIT_ON_SEMAPHORE` somente no primeiro tile;
+- `BRANCH_TO_SUB_LIST` para cada bloco de 32 bytes no tile allocation;
+- `STORE_MS_TILE_BUFFER`, usando a variante EOF no último tile.
+
+O cursor final precisa coincidir exatamente com o tamanho planejado. O BO é
+sincronizado CPU→GPU e imediatamente liberado. Combinações mais complexas
+continuam apenas planejadas; nenhuma RCL é executada.
+
+`vc4.resource` passou para aproximadamente 24.1 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 
@@ -1206,7 +1220,7 @@ próximo subconjunto deve aprofundar a validação sem executar:
 - completar o validador QPU com clamps, basic blocks, modo TMU direto e VPM;
 - validar P0-P3 e os limites físicos de cada texture BO;
 - manter o BO vivo em uma estrutura de job validado;
-- emitir a render command list privada dentro de um BO dimensionado;
+- ampliar o emissor RCL para clear, loads, ZS e MSAA;
 - criar o BO interno de tile allocation/state;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;

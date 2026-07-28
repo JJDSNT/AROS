@@ -90,6 +90,12 @@ static void vc4_write_le32(uint8_t *bytes, uint32_t value)
     bytes[3] = (uint8_t)(value >> 24);
 }
 
+static void vc4_write_le16(uint8_t *bytes, uint16_t value)
+{
+    bytes[0] = (uint8_t)value;
+    bytes[1] = (uint8_t)(value >> 8);
+}
+
 /*
  * First conservative QPU pass.  This mirrors the upstream termination,
  * signal, branch-boundary and immediately dangerous write checks.  It is not
@@ -1001,6 +1007,75 @@ static BOOL vc4_submit_rcl_plan_valid(const struct VC4SubmitCL *submit,
     return TRUE;
 }
 
+static BOOL vc4_submit_emit_simple_rcl(const struct VC4SubmitCL *submit,
+    const struct VC4BinInfo *bin_info, uint32_t color_bus,
+    uint32_t tile_bus, uint32_t tile_alloc_offset, uint8_t *rcl,
+    uint32_t rcl_size)
+{
+    uint32_t offset = 0;
+    uint32_t xi;
+    uint32_t yi;
+    uint32_t xtiles = (uint32_t)submit->max_x_tile -
+        submit->min_x_tile + 1U;
+    uint32_t ytiles = (uint32_t)submit->max_y_tile -
+        submit->min_y_tile + 1U;
+    BOOL positive_x = !(submit->flags & VC4_SUBMIT_FIXED_RCL_ORDER) ||
+        (submit->flags & VC4_SUBMIT_RCL_ORDER_INCREASING_X);
+    BOOL positive_y = !(submit->flags & VC4_SUBMIT_FIXED_RCL_ORDER) ||
+        (submit->flags & VC4_SUBMIT_RCL_ORDER_INCREASING_Y);
+
+    if (submit->color_write.hindex == UINT32_MAX ||
+        submit->color_write.flags ||
+        (submit->color_write.bits & ~0x00ddU) ||
+        submit->color_read.hindex != UINT32_MAX ||
+        submit->zs_read.hindex != UINT32_MAX ||
+        submit->zs_write.hindex != UINT32_MAX ||
+        submit->msaa_color_write.hindex != UINT32_MAX ||
+        submit->msaa_zs_write.hindex != UINT32_MAX ||
+        (submit->flags & VC4_SUBMIT_USE_CLEAR_COLOR))
+        return FALSE;
+
+    rcl[offset++] = 113;
+    vc4_write_le32(rcl + offset, color_bus + submit->color_write.offset);
+    offset += 4;
+    vc4_write_le16(rcl + offset, submit->width);
+    offset += 2;
+    vc4_write_le16(rcl + offset, submit->height);
+    offset += 2;
+    vc4_write_le16(rcl + offset, submit->color_write.bits);
+    offset += 2;
+
+    for (yi = 0; yi < ytiles; yi++)
+    {
+        uint32_t y = positive_y ? submit->min_y_tile + yi :
+            submit->max_y_tile - yi;
+
+        for (xi = 0; xi < xtiles; xi++)
+        {
+            uint32_t x = positive_x ? submit->min_x_tile + xi :
+                submit->max_x_tile - xi;
+            BOOL first = xi == 0 && yi == 0;
+            BOOL last = xi == xtiles - 1U && yi == ytiles - 1U;
+            uint64_t sublist = (uint64_t)tile_bus + tile_alloc_offset +
+                ((uint64_t)y * bin_info->tiles_x + x) * 32U;
+
+            if (sublist > UINT32_MAX || offset > rcl_size - (first ? 10U : 9U))
+                return FALSE;
+            rcl[offset++] = 115;
+            rcl[offset++] = (uint8_t)x;
+            rcl[offset++] = (uint8_t)y;
+            if (first)
+                rcl[offset++] = 8;
+            rcl[offset++] = 17;
+            vc4_write_le32(rcl + offset, (uint32_t)sublist);
+            offset += 4;
+            rcl[offset++] = last ? 25 : 24;
+        }
+    }
+
+    return offset == rcl_size;
+}
+
 AROS_LH1(int, VC4ValidateSubmitCL,
     AROS_LHA(const struct VC4SubmitCL *, submit, A0),
     struct VC4Base *, VC4Base, 6, Vc4)
@@ -1036,8 +1111,15 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     uint32_t tile_alloc_size;
     uint32_t tile_used_size;
     uint32_t planned_rcl_size = 0;
+    uint32_t rcl_handle = 0;
+    uint32_t rcl_bus_address;
+    uint32_t rcl_allocated_size;
+    uint32_t color_bus_address;
+    uint32_t color_allocated_size;
     APTR staging_map;
     APTR tile_map;
+    APTR rcl_map;
+    APTR color_map;
     struct VC4BinInfo bin_info = { 0 };
     uint32_t i;
     BOOL valid;
@@ -1271,6 +1353,32 @@ AROS_LH1(int, VC4ValidateSubmitCL,
                 config[15] = (config[15] & ~0x78U) |
                     (2U << 5) | (1U << 2);
             }
+            if (valid &&
+                submit->color_write.hindex != UINT32_MAX &&
+                submit->color_read.hindex == UINT32_MAX &&
+                submit->zs_read.hindex == UINT32_MAX &&
+                submit->zs_write.hindex == UINT32_MAX &&
+                submit->msaa_color_write.hindex == UINT32_MAX &&
+                submit->msaa_zs_write.hindex == UINT32_MAX &&
+                !(submit->flags & VC4_SUBMIT_USE_CLEAR_COLOR))
+            {
+                if (VC4MapBO(handles[submit->color_write.hindex],
+                    &color_map, &color_bus_address,
+                    &color_allocated_size) != 0 ||
+                    (uint64_t)color_bus_address +
+                        submit->color_write.offset > UINT32_MAX ||
+                    VC4CreateBO(planned_rcl_size, 4096, VC4_BOF_NOINIT,
+                        &rcl_handle) != 0 ||
+                    VC4MapBO(rcl_handle, &rcl_map, &rcl_bus_address,
+                        &rcl_allocated_size) != 0 ||
+                    planned_rcl_size > rcl_allocated_size ||
+                    !vc4_submit_emit_simple_rcl(submit, &bin_info,
+                        color_bus_address, tile_bus_address,
+                        tile_alloc_offset, rcl_map, planned_rcl_size) ||
+                    VC4SyncBO(rcl_handle, 0, planned_rcl_size,
+                        VC4_SYNC_CPU_TO_GPU) != 0)
+                    valid = FALSE;
+            }
             if (!valid ||
                 VC4SyncBO(staging_handle, 0, staging_used_size,
                 VC4_SYNC_CPU_TO_GPU) != 0)
@@ -1279,6 +1387,8 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     }
 
 staging_done:
+    if (rcl_handle && VC4FreeBO(rcl_handle) != 0)
+        valid = FALSE;
     if (tile_handle && VC4FreeBO(tile_handle) != 0)
         valid = FALSE;
     if (staging_handle && VC4FreeBO(staging_handle) != 0)
