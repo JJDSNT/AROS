@@ -1104,7 +1104,19 @@ A cópia compactada e seu tamanho são descartados ao final da validação e nun
 executados. Assim, esta etapa exercita a transformação sem introduzir lifetime
 ou acesso ao V3D prematuramente.
 
-`vc4.resource` passou para aproximadamente 21.1 KiB e define o vetor
+Uma segunda cópia privada também é produzida para uniforms. Para cada shader,
+a tabela inicial de hindices de textura é consumida, mas não copiada; somente
+os dados efetivamente lidos pelo QPU são compactados na saída. Cada P0 de
+textura validado recebe `texture_bus_address + p0`, escrito explicitamente em
+little-endian.
+
+O tamanho compactado é acompanhado separadamente e não pode exceder o stream
+original. A cópia continua alocada em memória comum, sem endereço de barramento
+próprio, e é descartada antes do retorno. Portanto, os ponteiros de uniforms
+nos shader records ainda não podem ser preenchidos e a execução permanece
+bloqueada.
+
+`vc4.resource` passou para aproximadamente 21.3 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 
@@ -1115,7 +1127,8 @@ próximo subconjunto deve aprofundar a validação sem executar:
 
 - completar o validador QPU com clamps, basic blocks, modo TMU direto e VPM;
 - validar P0-P3 e os limites físicos de cada texture BO;
-- criar cópias privadas relocadas dos shader records e uniforms;
+- criar a cópia privada relocada dos shader records;
+- colocar bin CL, shader records e uniforms em BO interno executável;
 - criar o BO interno de tile allocation/state;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;

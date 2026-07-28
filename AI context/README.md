@@ -331,6 +331,9 @@ O build completo precisa dos submódulos. Um exemplo é
 - bin CL compactada: uma segunda cópia privada omite `GEM_HANDLES`, recebe a
   relocation do index buffer e neutraliza endereços de tile/shader ainda não
   resolvidos. Ela é descartada sem execução ao final da validação.
+- uniforms compactados: hindices de textura são removidos, apenas os words
+  consumidos são copiados e P0 recebe a relocation do texture BO. A cópia
+  ainda não possui endereço de barramento e é descartada sem execução.
 
 ## Referências locais consultadas
 

@@ -384,8 +384,8 @@ static BOOL vc4_submit_texture_bounds_valid(const struct VC4BO *bo,
 static BOOL vc4_submit_qpu_textures_valid(struct VC4Base *VC4Base,
     const struct VC4BO *shader, const uint8_t *texture_handles,
     uint32_t texture_count, const uint8_t *uniform_data,
-    uint32_t uniform_data_size, const uint32_t *handles,
-    uint32_t handle_count)
+    uint32_t uniform_data_size, uint8_t *validated_uniform_data,
+    const uint32_t *handles, uint32_t handle_count)
 {
     const uint8_t *code = shader->bo_CPUAddress;
     uint32_t instructions = shader->bo_LogicalSize / sizeof(uint64_t);
@@ -395,6 +395,8 @@ static BOOL vc4_submit_qpu_textures_valid(struct VC4Base *VC4Base,
     uint32_t sample = 0;
     uint32_t end_ip = UINT32_MAX;
     uint32_t ip;
+
+    CopyMem(uniform_data, validated_uniform_data, uniform_data_size);
 
     for (ip = 0; ip < instructions; ip++)
     {
@@ -444,6 +446,8 @@ static BOOL vc4_submit_qpu_textures_valid(struct VC4Base *VC4Base,
                     !vc4_submit_texture_bounds_valid(texture_bo,
                         p0, p1, p2, p3))
                     return FALSE;
+                vc4_write_le32(validated_uniform_data + offsets[tmu][0],
+                    texture_bo->bo_BusAddress + p0);
                 counts[tmu] = 0;
                 sample++;
             }
@@ -659,12 +663,14 @@ static BOOL vc4_submit_bin_cl_valid(struct VC4Base *VC4Base,
 static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
     const uint8_t *records, uint32_t records_size, const uint32_t *handles,
     uint32_t handle_count, const struct VC4SubmitShaderState *states,
-    uint32_t state_count, const uint8_t *uniforms, uint32_t uniforms_size)
+    uint32_t state_count, const uint8_t *uniforms, uint32_t uniforms_size,
+    uint8_t *validated_uniforms, uint32_t *validated_uniforms_size)
 {
     static const uint32_t shader_offsets[3] = { 4, 16, 28 };
     uint32_t offset = 0;
     uint32_t state_index;
     uint32_t uniform_offset = 0;
+    uint32_t destination_uniform_offset = 0;
 
     for (state_index = 0; state_index < state_count; state_index++)
     {
@@ -736,8 +742,11 @@ static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
                     uniforms + uniform_offset, qpu.texture_count,
                     uniforms + uniform_offset +
                         qpu.texture_count * sizeof(uint32_t),
-                    qpu.uniform_data_bytes, handles, handle_count))
+                    qpu.uniform_data_bytes,
+                    validated_uniforms + destination_uniform_offset,
+                    handles, handle_count))
                     return FALSE;
+                destination_uniform_offset += qpu.uniform_data_bytes;
                 uniform_offset += (uint32_t)shader_uniform_bytes;
             }
             else
@@ -784,7 +793,8 @@ static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
         if (uniforms[uniform_offset++] != 0)
             return FALSE;
     }
-    return TRUE;
+    *validated_uniforms_size = destination_uniform_offset;
+    return destination_uniform_offset <= uniforms_size;
 }
 
 static BOOL vc4_submit_range_valid(uint64_t pointer, uint32_t size,
@@ -828,12 +838,14 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     APTR uniforms_copy = NULL;
     APTR handles_copy = NULL;
     APTR validated_bin_cl = NULL;
+    APTR validated_uniforms = NULL;
     struct VC4SubmitShaderState *shader_states = NULL;
     uint64_t total_size;
     uint32_t handles_size;
     uint32_t shader_states_size;
     uint32_t shader_state_count = 0;
     uint32_t validated_bin_cl_size = 0;
+    uint32_t validated_uniforms_size = 0;
     uint32_t i;
     BOOL valid;
 
@@ -877,11 +889,14 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     handles_copy = AllocMem(handles_size, MEMF_PUBLIC);
     validated_bin_cl = AllocMem(submit->bin_cl_size,
         MEMF_PUBLIC | MEMF_CLEAR);
+    validated_uniforms = AllocMem(submit->uniforms_size,
+        MEMF_PUBLIC | MEMF_CLEAR);
     if (shader_states_size)
         shader_states = AllocMem(shader_states_size,
             MEMF_PUBLIC | MEMF_CLEAR);
     if (!bin_cl_copy || !shader_rec_copy || !uniforms_copy || !handles_copy ||
         !validated_bin_cl ||
+        !validated_uniforms ||
         (shader_states_size && !shader_states))
     {
         valid = FALSE;
@@ -931,7 +946,8 @@ AROS_LH1(int, VC4ValidateSubmitCL,
         valid = vc4_submit_shader_recs_valid(VC4Base, shader_rec_copy,
             submit->shader_rec_size, handles, submit->bo_handle_count,
             shader_states, shader_state_count, uniforms_copy,
-            submit->uniforms_size);
+            submit->uniforms_size, validated_uniforms,
+            &validated_uniforms_size);
     }
 
     if (valid)
@@ -954,6 +970,8 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     ReleaseSemaphore(&VC4Base->vc4_Lock);
 
 cleanup:
+    if (validated_uniforms)
+        FreeMem(validated_uniforms, submit->uniforms_size);
     if (validated_bin_cl)
         FreeMem(validated_bin_cl, submit->bin_cl_size);
     if (shader_states)
