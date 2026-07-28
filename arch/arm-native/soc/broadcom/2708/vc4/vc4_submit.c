@@ -870,6 +870,13 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     uint32_t validated_bin_cl_size = 0;
     uint32_t validated_uniforms_size = 0;
     uint32_t validated_shader_recs_size = 0;
+    uint32_t staging_handle = 0;
+    uint32_t staging_bus_address;
+    uint32_t staging_allocated_size;
+    uint32_t staging_shader_offset;
+    uint32_t staging_uniform_offset;
+    uint32_t staging_used_size;
+    APTR staging_map;
     uint32_t i;
     BOOL valid;
 
@@ -996,6 +1003,56 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     }
 
     ReleaseSemaphore(&VC4Base->vc4_Lock);
+
+    if (valid)
+    {
+        uint64_t used_size;
+
+        staging_shader_offset = (validated_bin_cl_size + 15U) & ~15U;
+        staging_uniform_offset =
+            (staging_shader_offset + validated_shader_recs_size + 15U) &
+            ~15U;
+        used_size = (uint64_t)staging_uniform_offset +
+            validated_uniforms_size;
+        if (!used_size || used_size > UINT32_MAX)
+            valid = FALSE;
+        else
+            staging_used_size = (uint32_t)used_size;
+    }
+
+    if (valid)
+    {
+        /*
+         * Exercise the final GPU-visible layout without retaining or
+         * executing it. Cross-stream pointers stay zero until all their
+         * offsets are patched in a later validation stage.
+         */
+        if (VC4CreateBO(staging_used_size, 4096, VC4_BOF_NOINIT,
+            &staging_handle) != 0 ||
+            VC4MapBO(staging_handle, &staging_map, &staging_bus_address,
+                &staging_allocated_size) != 0 ||
+            staging_used_size > staging_allocated_size)
+        {
+            valid = FALSE;
+        }
+        else
+        {
+            CopyMem(validated_bin_cl, staging_map,
+                validated_bin_cl_size);
+            CopyMem(validated_shader_recs,
+                (uint8_t *)staging_map + staging_shader_offset,
+                validated_shader_recs_size);
+            CopyMem(validated_uniforms,
+                (uint8_t *)staging_map + staging_uniform_offset,
+                validated_uniforms_size);
+            if (VC4SyncBO(staging_handle, 0, staging_used_size,
+                VC4_SYNC_CPU_TO_GPU) != 0)
+                valid = FALSE;
+        }
+    }
+
+    if (staging_handle && VC4FreeBO(staging_handle) != 0)
+        valid = FALSE;
 
 cleanup:
     if (validated_shader_recs)

@@ -1129,7 +1129,25 @@ que a cópia compactada de uniforms estiver dentro do mesmo BO GPU interno.
 O padding introduzido pelo alinhamento nasce zerado, o tamanho produzido é
 limitado pelo stream original e toda a cópia é descartada sem execução.
 
-`vc4.resource` passou para aproximadamente 21.5 KiB e define o vetor
+Depois que toda a validação sob o lock termina, as três cópias compactadas
+são empacotadas em um BO de staging GPU-visible:
+
+```text
+offset 0                 bin CL
+align 16                 shader records
+align 16                 uniforms
+```
+
+O tamanho agregado é calculado em 64 bits, comparado com `UINT32_MAX` e com o
+tamanho físico retornado pelo firmware. Os bytes produzidos são copiados para
+o mapeamento e sincronizados com `VC4_SYNC_CPU_TO_GPU`.
+
+Esse BO é imediatamente liberado. Nenhum endereço cruzado é preenchido,
+nenhum estado é retido e CT0/CT1 não são tocados. A etapa serve para validar o
+ciclo real de allocation/map/cache/free e o layout final antes de introduzir
+lifetime, timeout e execução.
+
+`vc4.resource` passou para aproximadamente 21.9 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 
@@ -1140,8 +1158,8 @@ próximo subconjunto deve aprofundar a validação sem executar:
 
 - completar o validador QPU com clamps, basic blocks, modo TMU direto e VPM;
 - validar P0-P3 e os limites físicos de cada texture BO;
-- colocar bin CL, shader records e uniforms em BO interno executável;
 - preencher as referências cruzadas usando offsets dentro desse BO;
+- manter o BO vivo em uma estrutura de job validado;
 - criar o BO interno de tile allocation/state;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;

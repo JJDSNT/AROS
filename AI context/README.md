@@ -337,6 +337,9 @@ O build completo precisa dos submódulos. Um exemplo é
 - shader records compactados: tabelas de hindices são removidas, records ficam
   alinhados a 16 bytes e shaders/atributos recebem relocations. Ponteiros para
   uniforms permanecem zerados até existir um BO GPU interno.
+- BO de staging: bin CL, shader records e uniforms compactados são alinhados,
+  copiados para um único BO GPU-visible, sincronizados e imediatamente
+  liberados. Nenhum registrador V3D é tocado.
 
 ## Referências locais consultadas
 
