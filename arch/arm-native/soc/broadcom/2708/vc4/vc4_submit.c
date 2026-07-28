@@ -48,6 +48,12 @@ struct VC4SubmitShaderState
     uint32_t max_index;
 };
 
+struct VC4QPUValidation
+{
+    uint32_t uniform_data_bytes;
+    uint32_t texture_count;
+};
+
 _Static_assert(sizeof(struct VC4SubmitRCLSurface) == 12,
     "VC4 submit surface ABI mismatch");
 _Static_assert(sizeof(struct VC4SubmitCL) == 176,
@@ -74,7 +80,7 @@ static uint64_t vc4_read_le64(const uint8_t *bytes)
  * is deliberately left for the complete validator.
  */
 static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo,
-    uint32_t *uniform_bytes)
+    struct VC4QPUValidation *result)
 {
     const uint8_t *code;
     uint32_t instructions;
@@ -88,11 +94,13 @@ static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo,
     BOOL saw_tmu = FALSE;
     uint8_t tmu_write_count[2] = { 0, 0 };
 
-    if (!uniform_bytes || !bo || !(bo->bo_Flags & VC4_BOF_SHADER) ||
+    if (!result || !bo || !(bo->bo_Flags & VC4_BOF_SHADER) ||
         !bo->bo_CPUAddress || bo->bo_LogicalSize < 3U * sizeof(uint64_t) ||
         (bo->bo_LogicalSize & (sizeof(uint64_t) - 1U)) != 0)
         return FALSE;
 
+    result->uniform_data_bytes = 0;
+    result->texture_count = 0;
     code = bo->bo_CPUAddress;
     instructions = bo->bo_LogicalSize / sizeof(uint64_t);
 
@@ -162,10 +170,9 @@ static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo,
                 uniforms += sizeof(uint32_t);
                 if (submit_sample)
                 {
-                    /* One hindex precedes each texture sample's uniforms. */
-                    if (uniforms > UINT32_MAX - sizeof(uint32_t))
+                    if (result->texture_count == UINT32_MAX)
                         return FALSE;
-                    uniforms += sizeof(uint32_t);
+                    result->texture_count++;
                     tmu_write_count[tmu] = 0;
                 }
             }
@@ -212,7 +219,7 @@ static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo,
         {
             if (threaded && upper_registers)
                 return FALSE;
-            *uniform_bytes = uniforms;
+            result->uniform_data_bytes = uniforms;
             return TRUE;
         }
     }
@@ -372,12 +379,12 @@ static BOOL vc4_submit_bin_cl_valid(const uint8_t *cl, uint32_t size,
 static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
     const uint8_t *records, uint32_t records_size, const uint32_t *handles,
     uint32_t handle_count, const struct VC4SubmitShaderState *states,
-    uint32_t state_count, uint32_t uniforms_size)
+    uint32_t state_count, const uint8_t *uniforms, uint32_t uniforms_size)
 {
     static const uint32_t shader_offsets[3] = { 4, 16, 28 };
     uint32_t offset = 0;
     uint32_t state_index;
-    uint64_t minimum_uniform_bytes = 0;
+    uint32_t uniform_offset = 0;
 
     for (state_index = 0; state_index < state_count; state_index++)
     {
@@ -419,16 +426,33 @@ static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
 
             if (i < 3)
             {
-                uint32_t shader_uniform_bytes;
+                struct VC4QPUValidation qpu = { 0 };
+                uint64_t shader_uniform_bytes;
+                uint32_t texture;
 
                 if (!(bo->bo_Flags & VC4_BOF_SHADER) ||
                     vc4_read_le32(record + shader_offsets[i]) != 0 ||
-                    !vc4_submit_qpu_shader_valid(bo,
-                        &shader_uniform_bytes))
+                    !vc4_submit_qpu_shader_valid(bo, &qpu))
                     return FALSE;
-                minimum_uniform_bytes += shader_uniform_bytes;
-                if (minimum_uniform_bytes > uniforms_size)
+                shader_uniform_bytes = (uint64_t)qpu.texture_count *
+                    sizeof(uint32_t) + qpu.uniform_data_bytes;
+                if (shader_uniform_bytes > uniforms_size - uniform_offset)
                     return FALSE;
+
+                for (texture = 0; texture < qpu.texture_count; texture++)
+                {
+                    uint32_t hindex = vc4_read_le32(uniforms +
+                        uniform_offset + texture * sizeof(uint32_t));
+                    struct VC4BO *texture_bo;
+
+                    if (hindex >= handle_count)
+                        return FALSE;
+                    texture_bo = vc4_find_bo(VC4Base, handles[hindex]);
+                    if (!texture_bo ||
+                        (texture_bo->bo_Flags & VC4_BOF_SHADER))
+                        return FALSE;
+                }
+                uniform_offset += (uint32_t)shader_uniform_bytes;
             }
             else
             {
@@ -464,6 +488,13 @@ static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
     while (offset < records_size)
     {
         if (records[offset++] != 0)
+            return FALSE;
+    }
+    if (uniforms_size - uniform_offset > 15)
+        return FALSE;
+    while (uniform_offset < uniforms_size)
+    {
+        if (uniforms[uniform_offset++] != 0)
             return FALSE;
     }
     return TRUE;
@@ -603,7 +634,8 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     {
         valid = vc4_submit_shader_recs_valid(VC4Base, shader_rec_copy,
             submit->shader_rec_size, handles, submit->bo_handle_count,
-            shader_states, shader_state_count, submit->uniforms_size);
+            shader_states, shader_state_count, uniforms_copy,
+            submit->uniforms_size);
     }
 
     if (valid)

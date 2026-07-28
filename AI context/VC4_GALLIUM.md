@@ -1034,7 +1034,24 @@ O modo TMU direto e shaders que combinam TMU com branches permanecem
 deliberadamente rejeitados. Suportá-los com segurança requer a análise
 upstream de clamps e estados por basic block, que ainda não foi portada.
 
-`vc4.resource` passou para aproximadamente 18.5 KiB e define o vetor
+O resultado da análise QPU agora separa `texture_count` de
+`uniform_data_bytes`. A passagem dos shader records usa esses valores para
+caminhar pelo snapshot de uniforms na mesma organização do Mesa:
+
+```text
+[hindices das texturas][dados consumidos pelo shader]
+```
+
+Cada hindex é decodificado como little-endian, validado contra a tabela da
+submissão e resolvido sob o lock de `vc4.resource`. BOs ausentes ou marcados
+como shader não podem ser usados como textura. Ao final, só são tolerados até
+15 bytes de padding zero; dados extras não interpretados são rejeitados.
+
+Ainda não são interpretados os parâmetros P0-P3 das texturas. Portanto,
+dimensões, tiling, mip levels e o intervalo final acessado no texture BO
+continuam pendentes.
+
+`vc4.resource` passou para aproximadamente 19.0 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 
@@ -1044,6 +1061,7 @@ Substituir progressivamente o screen de sondagem pelo `vc4_screen.c` real. O
 próximo subconjunto deve aprofundar a validação sem executar:
 
 - completar o validador QPU com clamps, basic blocks, modo TMU direto e VPM;
+- validar P0-P3 e os limites físicos de cada texture BO;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;
 - manter execução desativada até existir uma lista validada e relocada.

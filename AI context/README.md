@@ -313,6 +313,10 @@ O build completo precisa dos submódulos. Um exemplo é
   hindices de textura e consumo de uniforms são rastreados. TMU direto e sua
   combinação com branches ficam rejeitados até a análise de clamps/basic
   blocks estar completa.
+- hindices de textura: a organização `[handles][uniform data]` de cada shader
+  é percorrida no snapshot, cada referência é resolvida e shader BOs são
+  proibidos como textura. A interpretação de P0-P3 e os bounds da imagem
+  continuam pendentes.
 
 ## Referências locais consultadas
 
