@@ -46,6 +46,8 @@ struct VC4SubmitShaderState
 {
     uint8_t pointer_bits;
     uint32_t max_index;
+    uint32_t record_offset;
+    uint32_t uniform_offset[3];
 };
 
 struct VC4QPUValidation
@@ -662,7 +664,7 @@ static BOOL vc4_submit_bin_cl_valid(struct VC4Base *VC4Base,
 
 static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
     const uint8_t *records, uint32_t records_size, const uint32_t *handles,
-    uint32_t handle_count, const struct VC4SubmitShaderState *states,
+    uint32_t handle_count, struct VC4SubmitShaderState *states,
     uint32_t state_count, const uint8_t *uniforms, uint32_t uniforms_size,
     uint8_t *validated_records, uint32_t *validated_records_size,
     uint8_t *validated_uniforms, uint32_t *validated_uniforms_size)
@@ -676,7 +678,7 @@ static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
 
     for (state_index = 0; state_index < state_count; state_index++)
     {
-        const struct VC4SubmitShaderState *state = &states[state_index];
+        struct VC4SubmitShaderState *state = &states[state_index];
         uint32_t attributes = state->pointer_bits & 7U;
         uint32_t record_size;
         uint32_t relocations;
@@ -706,6 +708,7 @@ static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
         if (aligned_record_size > records_size - destination_record_offset)
             return FALSE;
         validated_record = validated_records + destination_record_offset;
+        state->record_offset = destination_record_offset;
         CopyMem(record, validated_record, record_size);
         destination_record_offset += aligned_record_size;
 
@@ -730,6 +733,7 @@ static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
                     vc4_read_le32(record + shader_offsets[i]) != 0 ||
                     !vc4_submit_qpu_shader_valid(bo, &qpu))
                     return FALSE;
+                state->uniform_offset[i] = destination_uniform_offset;
                 vc4_write_le32(validated_record + shader_offsets[i],
                     bo->bo_BusAddress);
                 /*
@@ -817,6 +821,59 @@ static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
     *validated_uniforms_size = destination_uniform_offset;
     return destination_record_offset <= records_size &&
         destination_uniform_offset <= uniforms_size;
+}
+
+static BOOL vc4_submit_patch_staging(uint8_t *bin_cl, uint32_t bin_cl_size,
+    uint8_t *shader_records, uint32_t shader_bus, uint32_t uniforms_bus,
+    const struct VC4SubmitShaderState *states, uint32_t state_count)
+{
+    static const uint32_t shader_offsets[3] = { 4, 16, 28 };
+    uint32_t offset = 0;
+    uint32_t state_index = 0;
+    uint32_t i;
+
+    while (offset < bin_cl_size)
+    {
+        uint32_t packet_size = vc4_bin_packet_size(bin_cl[offset]);
+
+        if (!packet_size || packet_size > bin_cl_size - offset)
+            return FALSE;
+        if (bin_cl[offset] == VC4_PACKET_GL_SHADER_STATE)
+        {
+            uint64_t address;
+
+            if (state_index >= state_count)
+                return FALSE;
+            address = (uint64_t)shader_bus +
+                states[state_index].record_offset;
+            if (address > UINT32_MAX)
+                return FALSE;
+            vc4_write_le32(bin_cl + offset + 1,
+                (uint32_t)address | states[state_index].pointer_bits);
+            state_index++;
+        }
+        offset += packet_size;
+    }
+
+    if (state_index != state_count)
+        return FALSE;
+    for (state_index = 0; state_index < state_count; state_index++)
+    {
+        uint8_t *record = shader_records +
+            states[state_index].record_offset;
+
+        for (i = 0; i < 3; i++)
+        {
+            uint64_t address = (uint64_t)uniforms_bus +
+                states[state_index].uniform_offset[i];
+
+            if (address > UINT32_MAX)
+                return FALSE;
+            vc4_write_le32(record + shader_offsets[i] + 4U,
+                (uint32_t)address);
+        }
+    }
+    return TRUE;
 }
 
 static BOOL vc4_submit_range_valid(uint64_t pointer, uint32_t size,
@@ -1037,6 +1094,25 @@ AROS_LH1(int, VC4ValidateSubmitCL,
         }
         else
         {
+            uint64_t staging_end = (uint64_t)staging_bus_address +
+                staging_used_size;
+            uint64_t shader_bus64 = (uint64_t)staging_bus_address +
+                staging_shader_offset;
+            uint64_t uniforms_bus64 = (uint64_t)staging_bus_address +
+                staging_uniform_offset;
+            uint32_t shader_bus;
+            uint32_t uniforms_bus;
+
+            if (staging_end > (uint64_t)UINT32_MAX + 1U ||
+                (shader_state_count &&
+                 (shader_bus64 > UINT32_MAX ||
+                  uniforms_bus64 > UINT32_MAX)))
+            {
+                valid = FALSE;
+                goto staging_done;
+            }
+            shader_bus = (uint32_t)shader_bus64;
+            uniforms_bus = (uint32_t)uniforms_bus64;
             CopyMem(validated_bin_cl, staging_map,
                 validated_bin_cl_size);
             CopyMem(validated_shader_recs,
@@ -1045,12 +1121,18 @@ AROS_LH1(int, VC4ValidateSubmitCL,
             CopyMem(validated_uniforms,
                 (uint8_t *)staging_map + staging_uniform_offset,
                 validated_uniforms_size);
-            if (VC4SyncBO(staging_handle, 0, staging_used_size,
+            if (!vc4_submit_patch_staging(staging_map,
+                validated_bin_cl_size,
+                (uint8_t *)staging_map + staging_shader_offset,
+                shader_bus, uniforms_bus, shader_states,
+                shader_state_count) ||
+                VC4SyncBO(staging_handle, 0, staging_used_size,
                 VC4_SYNC_CPU_TO_GPU) != 0)
                 valid = FALSE;
         }
     }
 
+staging_done:
     if (staging_handle && VC4FreeBO(staging_handle) != 0)
         valid = FALSE;
 

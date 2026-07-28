@@ -340,6 +340,9 @@ O build completo precisa dos submódulos. Um exemplo é
 - BO de staging: bin CL, shader records e uniforms compactados são alinhados,
   copiados para um único BO GPU-visible, sincronizados e imediatamente
   liberados. Nenhum registrador V3D é tocado.
+- referências cruzadas: `GL_SHADER_STATE` e os três ponteiros de uniforms são
+  preenchidos dentro do BO usando offsets registrados durante a validação,
+  com proteção contra overflow de endereço de barramento.
 
 ## Referências locais consultadas
 

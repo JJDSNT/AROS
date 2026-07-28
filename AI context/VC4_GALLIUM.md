@@ -1142,12 +1142,25 @@ O tamanho agregado é calculado em 64 bits, comparado com `UINT32_MAX` e com o
 tamanho físico retornado pelo firmware. Os bytes produzidos são copiados para
 o mapeamento e sincronizados com `VC4_SYNC_CPU_TO_GPU`.
 
-Esse BO é imediatamente liberado. Nenhum endereço cruzado é preenchido,
-nenhum estado é retido e CT0/CT1 não são tocados. A etapa serve para validar o
-ciclo real de allocation/map/cache/free e o layout final antes de introduzir
-lifetime, timeout e execução.
+Esse BO é imediatamente liberado, nenhum estado é retido e CT0/CT1 não são
+tocados. A etapa serve para validar o ciclo real de allocation/map/cache/free
+e o layout final antes de introduzir lifetime, timeout e execução.
 
-`vc4.resource` passou para aproximadamente 21.9 KiB e define o vetor
+Durante a validação dos shader records, cada estado agora guarda o offset de
+seu record compactado e os três offsets de uniforms de FS/VS/CS. Depois que o
+BO de staging fornece um endereço de barramento, esses metadados imutáveis
+preenchem as referências cruzadas:
+
+- cada `GL_SHADER_STATE` recebe `shader_records_bus + record_offset`, mantendo
+  seus quatro bits inferiores;
+- cada ponteiro de uniforms recebe `uniforms_bus + shader_uniform_offset`.
+
+Todas as somas são feitas em 64 bits e rejeitadas se não couberem no endereço
+VC4 de 32 bits. O patch ocorre antes da sincronização CPU→GPU e não relê
+shader BOs nem buffers do caller. O BO completo continua sendo liberado sem
+execução e CT0/CT1 permanecem intocados.
+
+`vc4.resource` passou para aproximadamente 22.4 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 
@@ -1158,8 +1171,8 @@ próximo subconjunto deve aprofundar a validação sem executar:
 
 - completar o validador QPU com clamps, basic blocks, modo TMU direto e VPM;
 - validar P0-P3 e os limites físicos de cada texture BO;
-- preencher as referências cruzadas usando offsets dentro desse BO;
 - manter o BO vivo em uma estrutura de job validado;
+- criar o BO separado de tile allocation/state e preencher o bin config;
 - criar o BO interno de tile allocation/state;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;
