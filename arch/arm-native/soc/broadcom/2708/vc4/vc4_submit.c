@@ -61,6 +61,80 @@ static uint32_t vc4_read_le32(const uint8_t *bytes)
         ((uint32_t)bytes[3] << 24);
 }
 
+static uint64_t vc4_read_le64(const uint8_t *bytes)
+{
+    return (uint64_t)vc4_read_le32(bytes) |
+        ((uint64_t)vc4_read_le32(bytes + 4) << 32);
+}
+
+/*
+ * First conservative QPU pass.  This mirrors the upstream termination,
+ * signal, branch-boundary and immediately dangerous write checks.  It is not
+ * yet sufficient to authorize execution: TMU and uniform data-flow analysis
+ * is deliberately left for the complete validator.
+ */
+static BOOL vc4_submit_qpu_shader_valid(const struct VC4BO *bo)
+{
+    const uint8_t *code;
+    uint32_t instructions;
+    uint32_t ip;
+    uint32_t end_ip = UINT32_MAX;
+
+    if (!bo || !(bo->bo_Flags & VC4_BOF_SHADER) ||
+        !bo->bo_CPUAddress || bo->bo_LogicalSize < 3U * sizeof(uint64_t) ||
+        (bo->bo_LogicalSize & (sizeof(uint64_t) - 1U)) != 0)
+        return FALSE;
+
+    code = bo->bo_CPUAddress;
+    instructions = bo->bo_LogicalSize / sizeof(uint64_t);
+
+    for (ip = 0; ip < instructions; ip++)
+    {
+        uint64_t instruction = vc4_read_le64(code + ip * 8U);
+        uint32_t signal = (uint32_t)(instruction >> 60);
+        uint32_t waddr_add = (uint32_t)((instruction >> 38) & 0x3fU);
+        uint32_t waddr_mul = (uint32_t)((instruction >> 32) & 0x3fU);
+
+        if (signal == 0 || signal == 7 || signal == 9 || signal == 12)
+            return FALSE;
+
+        if (signal == 15)
+        {
+            int32_t branch_offset = (int32_t)(uint32_t)instruction;
+            int64_t target;
+
+            if ((instruction & ((uint64_t)1 << 50)) != 0 ||
+                (instruction & ((uint64_t)1 << 51)) == 0 ||
+                (branch_offset & 7) != 0 ||
+                waddr_add != 39 || waddr_mul != 39 ||
+                ip + 4U >= instructions)
+                return FALSE;
+            target = (int64_t)ip + 4 + branch_offset / 8;
+            if (target < 0 || target >= instructions)
+                return FALSE;
+        }
+        else
+        {
+            if (waddr_add == 36 || waddr_add == 38 ||
+                waddr_add == 47 || waddr_add == 50 || waddr_add == 51 ||
+                waddr_mul == 36 || waddr_mul == 38 ||
+                waddr_mul == 47 || waddr_mul == 50 || waddr_mul == 51)
+                return FALSE;
+        }
+
+        if (signal == 3)
+        {
+            if (ip + 2U >= instructions)
+                return FALSE;
+            end_ip = ip + 2U;
+        }
+        if (ip == end_ip)
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
 static uint32_t vc4_bin_packet_size(uint8_t opcode)
 {
     switch (opcode)
@@ -261,7 +335,7 @@ static BOOL vc4_submit_shader_recs_valid(struct VC4Base *VC4Base,
             {
                 if (!(bo->bo_Flags & VC4_BOF_SHADER) ||
                     vc4_read_le32(record + shader_offsets[i]) != 0 ||
-                    bo->bo_Size < sizeof(uint64_t))
+                    !vc4_submit_qpu_shader_valid(bo))
                     return FALSE;
             }
             else

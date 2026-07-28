@@ -301,6 +301,10 @@ O build completo precisa dos submódulos. Um exemplo é
   três shaders e limites de todos os atributos são validados contra os BOs;
   BOs de shader e de dados agora possuem tipos distintos. A validação das
   instruções QPU e dos uniforms continua pendente e a execução segue bloqueada.
+- QPU preliminar: tamanho lógico do shader, instruções little-endian, sinais,
+  terminação, branches e destinos de escrita imediatamente perigosos são
+  checados. A análise completa de data-flow continua pendente, portanto esta
+  etapa ainda não autoriza execução.
 
 ## Referências locais consultadas
 

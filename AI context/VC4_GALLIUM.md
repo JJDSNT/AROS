@@ -985,9 +985,31 @@ o snapshot de shader records. Para cada estado ela:
 `CREATE_SHADER_BO`, e a validação impede misturar shader BOs e BOs de dados
 nos shader records. Flags desconhecidas de criação de BO agora falham.
 
-Ainda falta validar as instruções QPU dentro dos três shader BOs. Portanto,
-um BO estar marcado como shader e ter tamanho suficiente não o torna seguro
-para execução; `SUBMIT_CL` continua terminando em `NOT_IMPLEMENTED`.
+Ainda falta validar completamente as instruções QPU dentro dos três shader
+BOs. Portanto, um BO estar marcado como shader e passar pelas verificações
+estruturais não o torna seguro para execução; `SUBMIT_CL` continua terminando
+em `NOT_IMPLEMENTED`.
+
+Uma primeira passagem conservadora de instruções QPU foi adicionada. O BO
+agora preserva separadamente o tamanho lógico solicitado e o tamanho físico
+arredondado para página; apenas o tamanho lógico entra no decoder. A passagem:
+
+- exige código não vazio, múltiplo de 64 bits e com espaço para `PROG_END`
+  mais seus dois delay slots;
+- lê cada instrução explicitamente como little-endian;
+- aceita apenas os sinais QPU reconhecidos pelo validador upstream;
+- rejeita breakpoint e sinais de load não suportados;
+- rejeita imediatamente writes para host interrupt, TMU no-swap, alpha mask,
+  VPM DMA address e mutex release;
+- aceita somente branches relativos, sem endereço vindo de registrador;
+- exige branch alinhado, com os dois caminhos dentro do shader BO;
+- exige que branch não escreva registradores;
+- exige terminação explícita por `PROG_END`.
+
+Essa passagem reduz a superfície aceita, mas ainda não prova segurança
+completa. Falta portar a análise de data-flow do upstream para uniforms,
+configuração TMU, clamps, resets de uniform address, thread switches e VPM.
+Por isso ela não muda a decisão de manter execução desabilitada.
 
 `vc4.resource` passou para aproximadamente 16.8 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
@@ -998,7 +1020,7 @@ compilam sem símbolos indefinidos.
 Substituir progressivamente o screen de sondagem pelo `vc4_screen.c` real. O
 próximo subconjunto deve aprofundar a validação sem executar:
 
-- portar o validador de instruções QPU dos shader BOs;
+- completar o validador QPU com data-flow de uniforms/TMU/VPM;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;
 - manter execução desativada até existir uma lista validada e relocada.
