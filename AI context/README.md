@@ -343,6 +343,9 @@ O build completo precisa dos submódulos. Um exemplo é
 - referências cruzadas: `GL_SHADER_STATE` e os três ponteiros de uniforms são
   preenchidos dentro do BO usando offsets registrados durante a validação,
   com proteção contra overflow de endereço de barramento.
+- tile BO: state e allocation são dimensionados pela grade de tiles, separados
+  em 4 KiB e ligados ao `TILE_BINNING_MODE_CONFIG`; o BO é zerado e liberado
+  sem execução.
 
 ## Referências locais consultadas
 

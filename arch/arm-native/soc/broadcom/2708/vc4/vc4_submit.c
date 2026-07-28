@@ -56,6 +56,13 @@ struct VC4QPUValidation
     uint32_t texture_count;
 };
 
+struct VC4BinInfo
+{
+    uint32_t config_offset;
+    uint8_t tiles_x;
+    uint8_t tiles_y;
+};
+
 _Static_assert(sizeof(struct VC4SubmitRCLSurface) == 12,
     "VC4 submit surface ABI mismatch");
 _Static_assert(sizeof(struct VC4SubmitCL) == 176,
@@ -520,7 +527,8 @@ static BOOL vc4_submit_bin_cl_valid(struct VC4Base *VC4Base,
     const uint8_t *cl, uint32_t size, const uint32_t *handles,
     uint32_t bo_count, uint32_t shader_rec_count,
     struct VC4SubmitShaderState *states, uint32_t *state_count,
-    uint8_t *validated_cl, uint32_t *validated_size)
+    uint8_t *validated_cl, uint32_t *validated_size,
+    struct VC4BinInfo *bin_info)
 {
     uint32_t offset = 0;
     uint32_t destination_offset = 0;
@@ -554,6 +562,9 @@ static BOOL vc4_submit_bin_cl_valid(struct VC4Base *VC4Base,
                     (cl[offset + 15] & ((1U << 7) | (1U << 1))) != 0)
                     return FALSE;
                 found_config = TRUE;
+                bin_info->config_offset = destination_offset;
+                bin_info->tiles_x = cl[offset + 13];
+                bin_info->tiles_y = cl[offset + 14];
                 /*
                  * Tile allocation/state addresses are resource-owned and
                  * will be filled only after their BO exists.
@@ -933,7 +944,15 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     uint32_t staging_shader_offset;
     uint32_t staging_uniform_offset;
     uint32_t staging_used_size;
+    uint32_t tile_handle = 0;
+    uint32_t tile_bus_address;
+    uint32_t tile_allocated_size;
+    uint32_t tile_alloc_offset;
+    uint32_t tile_alloc_size;
+    uint32_t tile_used_size;
     APTR staging_map;
+    APTR tile_map;
+    struct VC4BinInfo bin_info = { 0 };
     uint32_t i;
     BOOL valid;
 
@@ -1026,7 +1045,7 @@ AROS_LH1(int, VC4ValidateSubmitCL,
         valid = vc4_submit_bin_cl_valid(VC4Base, bin_cl_copy,
             submit->bin_cl_size, handles, submit->bo_handle_count,
             submit->shader_rec_count, shader_states, &shader_state_count,
-            validated_bin_cl, &validated_bin_cl_size);
+            validated_bin_cl, &validated_bin_cl_size, &bin_info);
         if (valid && (!validated_bin_cl_size ||
             validated_bin_cl_size > submit->bin_cl_size))
             valid = FALSE;
@@ -1064,6 +1083,9 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     if (valid)
     {
         uint64_t used_size;
+        uint32_t tile_count = (uint32_t)bin_info.tiles_x *
+            bin_info.tiles_y;
+        uint64_t tile_size;
 
         staging_shader_offset = (validated_bin_cl_size + 15U) & ~15U;
         staging_uniform_offset =
@@ -1075,6 +1097,17 @@ AROS_LH1(int, VC4ValidateSubmitCL,
             valid = FALSE;
         else
             staging_used_size = (uint32_t)used_size;
+
+        tile_alloc_offset =
+            (48U * tile_count + 4095U) & ~4095U;
+        tile_alloc_size =
+            (32U * tile_count + 255U) & ~255U;
+        tile_alloc_size += 1024U * 1024U;
+        tile_size = (uint64_t)tile_alloc_offset + tile_alloc_size;
+        if (!tile_count || tile_size > UINT32_MAX)
+            valid = FALSE;
+        else
+            tile_used_size = (uint32_t)tile_size;
     }
 
     if (valid)
@@ -1111,6 +1144,16 @@ AROS_LH1(int, VC4ValidateSubmitCL,
                 valid = FALSE;
                 goto staging_done;
             }
+            if (VC4CreateBO(tile_used_size, 4096, 0, &tile_handle) != 0 ||
+                VC4MapBO(tile_handle, &tile_map, &tile_bus_address,
+                    &tile_allocated_size) != 0 ||
+                tile_used_size > tile_allocated_size ||
+                (uint64_t)tile_bus_address + tile_used_size >
+                    (uint64_t)UINT32_MAX + 1U)
+            {
+                valid = FALSE;
+                goto staging_done;
+            }
             shader_bus = (uint32_t)shader_bus64;
             uniforms_bus = (uint32_t)uniforms_bus64;
             CopyMem(validated_bin_cl, staging_map,
@@ -1125,7 +1168,21 @@ AROS_LH1(int, VC4ValidateSubmitCL,
                 validated_bin_cl_size,
                 (uint8_t *)staging_map + staging_shader_offset,
                 shader_bus, uniforms_bus, shader_states,
-                shader_state_count) ||
+                shader_state_count))
+                valid = FALSE;
+            if (valid)
+            {
+                uint8_t *config = (uint8_t *)staging_map +
+                    bin_info.config_offset;
+
+                vc4_write_le32(config + 1,
+                    tile_bus_address + tile_alloc_offset);
+                vc4_write_le32(config + 5, tile_alloc_size);
+                vc4_write_le32(config + 9, tile_bus_address);
+                config[15] = (config[15] & ~0x78U) |
+                    (2U << 5) | (1U << 2);
+            }
+            if (!valid ||
                 VC4SyncBO(staging_handle, 0, staging_used_size,
                 VC4_SYNC_CPU_TO_GPU) != 0)
                 valid = FALSE;
@@ -1133,6 +1190,8 @@ AROS_LH1(int, VC4ValidateSubmitCL,
     }
 
 staging_done:
+    if (tile_handle && VC4FreeBO(tile_handle) != 0)
+        valid = FALSE;
     if (staging_handle && VC4FreeBO(staging_handle) != 0)
         valid = FALSE;
 

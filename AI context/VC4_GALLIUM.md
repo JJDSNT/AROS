@@ -1160,7 +1160,22 @@ VC4 de 32 bits. O patch ocorre antes da sincronização CPU→GPU e não relê
 shader BOs nem buffers do caller. O BO completo continua sendo liberado sem
 execução e CT0/CT1 permanecem intocados.
 
-`vc4.resource` passou para aproximadamente 22.4 KiB e define o vetor
+O decoder também guarda a posição do `TILE_BINNING_MODE_CONFIG` e a grade de
+tiles. Um segundo BO GPU-visible é criado com o layout usado pelo upstream:
+
+- 48 bytes de tile state por tile;
+- tile allocation começando no próximo limite de 4 KiB;
+- bloco inicial de 32 bytes por tile, arredondado a 256 bytes;
+- 1 MiB adicional para allocations antes de overflow.
+
+O staging bin CL recebe o endereço/size de tile allocation e o endereço de
+tile state. Os flags são normalizados para auto-init, bloco inicial de 32
+bytes e blocos seguintes de 128 bytes. Tamanhos e endereços são verificados
+em 64 bits contra o BO retornado pelo firmware.
+
+O tile BO nasce zerado, não é executado e é liberado junto com o staging BO.
+
+`vc4.resource` passou para aproximadamente 22.8 KiB e define o vetor
 `Vc4_6_VC4ValidateSubmitCL`. O HIDD tem aproximadamente 789.8 KiB. Ambos
 compilam sem símbolos indefinidos.
 
@@ -1172,7 +1187,7 @@ próximo subconjunto deve aprofundar a validação sem executar:
 - completar o validador QPU com clamps, basic blocks, modo TMU direto e VPM;
 - validar P0-P3 e os limites físicos de cada texture BO;
 - manter o BO vivo em uma estrutura de job validado;
-- criar o BO separado de tile allocation/state e preencher o bin config;
+- construir a render command list privada a partir das superfícies;
 - criar o BO interno de tile allocation/state;
 - validar uniforms e referências de textura;
 - produzir uma command list privada relocada;
