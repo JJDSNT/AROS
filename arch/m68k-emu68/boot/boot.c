@@ -46,6 +46,8 @@ extern char __aros_resident_end[];
 extern void Exec_Supervisor_Trap(void);
 extern void emu68_enter_user(void (*entry)(void), void *stack)
     __attribute__((noreturn));
+extern BOOL emu68_vtimer_start(ULONG interval_us);
+extern volatile ULONG emu68_vtimer_ticks;
 
 static struct TagItem emu68_boot_tags[9];
 
@@ -67,6 +69,12 @@ static void scheduler_probe(void)
     set_stage(&emu68_boot_context, EMU68_STAGE_TASK_RUNNING);
     emu68_console_puts("[AROS/Emu68] scheduled task is running\n");
 
+    while (emu68_vtimer_ticks < 3)
+        ;
+
+    set_stage(&emu68_boot_context, EMU68_STAGE_TIMER_RUNNING);
+    emu68_console_puts("[AROS/Emu68] virtual timer interrupts are running\n");
+
     for (;;)
         ;
 }
@@ -81,6 +89,11 @@ static void coldstart_user(void)
     ctx->flags |= EMU68_BOOT_COLDSTART_READY;
     set_stage(ctx, EMU68_STAGE_MULTITASKING);
     emu68_console_puts("[AROS/Emu68] Exec multitasking enabled\n");
+
+    if (emu68_vtimer_start(20000))
+        emu68_console_puts("[AROS/Emu68] virtual timer enabled\n");
+    else
+        emu68_console_puts("[AROS/Emu68] virtual timer not found\n");
 
     if (!NewCreateTask(TASKTAG_NAME, "Emu68 scheduler probe",
                        TASKTAG_PRI, 125,
