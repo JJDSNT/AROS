@@ -139,6 +139,7 @@ static void scheduler_probe(void)
 static void coldstart_user(void)
 {
     struct Emu68BootContext *ctx = &emu68_boot_context;
+    ULONG timer_interval_us;
 
     set_stage(ctx, EMU68_STAGE_COLDSTART);
     emu68_console_puts("[AROS/Emu68] InitCode COLDSTART in user mode\n");
@@ -156,8 +157,13 @@ static void coldstart_user(void)
     set_stage(ctx, EMU68_STAGE_MULTITASKING);
     emu68_console_puts("[AROS/Emu68] Exec multitasking enabled\n");
 
+    timer_interval_us = SysBase->VBlankFrequency
+        ? 1000000UL / SysBase->VBlankFrequency
+        : 20000UL;
     if ((ctx->flags & EMU68_BOOT_TIMER_VALID) &&
-        emu68_vtimer_start(ctx->timer_base, ctx->timer_irq, 20000))
+        timer_interval_us &&
+        emu68_vtimer_start(ctx->timer_base, ctx->timer_irq,
+                           timer_interval_us))
         emu68_console_puts("[AROS/Emu68] virtual timer enabled\n");
     else
         emu68_console_puts("[AROS/Emu68] virtual timer not found\n");
