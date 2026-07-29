@@ -10,6 +10,8 @@
 
 #include <aros/kernel.h>
 #include <exec/memory.h>
+#include <exec/resident.h>
+#include <proto/exec.h>
 #include <utility/tagitem.h>
 
 #include "kernel_base.h"
@@ -43,6 +45,18 @@ extern char __aros_resident_start[];
 extern char __aros_resident_end[];
 
 static struct TagItem emu68_boot_tags[9];
+
+static void set_stage(struct Emu68BootContext *ctx, uint32_t stage)
+{
+    ctx->stage = stage;
+
+    /*
+     * The first page is kept out of the allocator. Leave a big-endian marker
+     * immediately above the 68k vector table so a bare-metal monitor can
+     * diagnose boot progress before a console is available.
+     */
+    *(volatile uint32_t *)0x400 = stage;
+}
 
 static uint32_t align4(uint32_t value)
 {
@@ -312,6 +326,15 @@ static void start_aros(struct Emu68BootContext *ctx)
     {
         ctx->exec_base = sys_base;
         ctx->flags |= EMU68_BOOT_EXEC_READY;
+        set_stage(ctx, EMU68_STAGE_EXEC_READY);
+        emu68_console_puts("[AROS/Emu68] ExecBase ready\n");
+
+        set_stage(ctx, EMU68_STAGE_SINGLETASK);
+        emu68_console_puts("[AROS/Emu68] InitCode SINGLETASK\n");
+        InitCode(RTF_SINGLETASK, 0);
+        ctx->flags |= EMU68_BOOT_KERNEL_READY;
+        set_stage(ctx, EMU68_STAGE_KERNEL_READY);
+        emu68_console_puts("[AROS/Emu68] kernel.resource ready\n");
     }
 }
 
@@ -332,9 +355,13 @@ void emu68_bootstrap(const void *fdt, void *framebuffer, uint32_t pitch,
     emu68_boot_context.bootargs = 0;
     emu68_boot_context.bootargs_size = 0;
     emu68_boot_context.exec_base = 0;
+    set_stage(&emu68_boot_context, EMU68_STAGE_ENTRY);
 
     if (framebuffer && pitch && width && height)
         emu68_boot_context.flags |= EMU68_BOOT_FRAMEBUFFER;
+
+    emu68_console_init(framebuffer, pitch, width, height);
+    emu68_console_puts("[AROS/Emu68] native m68k bootstrap\n");
 
     parse_fdt(&emu68_boot_context);
     start_aros(&emu68_boot_context);
