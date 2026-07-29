@@ -5,15 +5,16 @@ BOOTOBJ   := $(TARGETDIR)/entry.o $(TARGETDIR)/usermode.o $(TARGETDIR)/boot.o \
              $(TARGETDIR)/console.o $(TARGETDIR)/font8x14.o
 BOOTELF   := $(AROSDIR)/aros-emu68-m68k.elf
 BOOTMAP   := $(GENDIR)/boot/aros-emu68-m68k.elf.map
-COREOBJS  := $(KOBJSDIR)/kernel_resource.o $(KOBJSDIR)/exec_library.o
+COREOBJS  := $(KOBJSDIR)/kernel_resource.o $(KOBJSDIR)/exec_library.o \
+             $(KOBJSDIR)/timer_device.o
 CORELIBS  := -L$(AROS_LIB) -larossupport -lautoinit -llibinit -lstdc.static -lgcc
 
 USER_CPPFLAGS := -D__EMU68__
 USER_CFLAGS   := $(CFLAGS_NO_BUILTIN) -fno-common
 USER_INCLUDES := -I$(SRCDIR)/rom/kernel -I$(SRCDIR)/rom/exec
 
-#MM- kernel-link-emu68-m68k : kernel-kernel-kobj kernel-exec-kobj
-#MM- kernel-link-emu68-m68k-quick : kernel-kernel-kobj-quick kernel-exec-kobj-quick
+#MM- kernel-link-emu68-m68k : kernel-kernel-kobj kernel-exec-kobj kernel-timer-kobj
+#MM- kernel-link-emu68-m68k-quick : kernel-kernel-kobj-quick kernel-exec-kobj-quick kernel-timer-kobj-quick
 #MM kernel-link-emu68-m68k: $(BOOTELF)
 #MM kernel-link-emu68-m68k-quick: $(BOOTELF)
 kernel-link-emu68-m68k: $(BOOTELF)

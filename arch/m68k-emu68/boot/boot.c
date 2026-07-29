@@ -9,6 +9,7 @@
 #include "boot.h"
 
 #include <aros/kernel.h>
+#include <devices/timer.h>
 #include <exec/memory.h>
 #include <exec/resident.h>
 #include <proto/exec.h>
@@ -52,6 +53,36 @@ extern volatile ULONG emu68_vtimer_ticks;
 
 static struct TagItem emu68_boot_tags[9];
 
+static BOOL timer_device_is_ticking(void)
+{
+    struct MsgPort *port;
+    struct timerequest *request;
+    BOOL ticking = FALSE;
+
+    port = CreateMsgPort();
+    if (!port)
+        return FALSE;
+
+    request = (struct timerequest *)
+        CreateIORequest(port, sizeof(struct timerequest));
+    if (request)
+    {
+        if (OpenDevice(TIMERNAME, UNIT_MICROHZ,
+                       (struct IORequest *)request, 0) == 0)
+        {
+            request->tr_node.io_Command = TR_GETSYSTIME;
+            DoIO((struct IORequest *)request);
+            ticking = request->tr_time.tv_secs != 0 ||
+                      request->tr_time.tv_micro != 0;
+            CloseDevice((struct IORequest *)request);
+        }
+        DeleteIORequest((struct IORequest *)request);
+    }
+    DeleteMsgPort(port);
+
+    return ticking;
+}
+
 static void set_stage(struct Emu68BootContext *ctx, uint32_t stage)
 {
     ctx->stage = stage;
@@ -73,6 +104,15 @@ static void scheduler_probe(void)
     while (emu68_vtimer_ticks < 3)
         ;
 
+    if (timer_device_is_ticking())
+    {
+        emu68_boot_context.flags |= EMU68_BOOT_TIMER_TICKING;
+        set_stage(&emu68_boot_context, EMU68_STAGE_TIMER_DEVICE);
+        emu68_console_puts("[AROS/Emu68] timer.device clock is advancing\n");
+    }
+    else
+        emu68_console_puts("[AROS/Emu68] timer.device clock is stalled\n");
+
     set_stage(&emu68_boot_context, EMU68_STAGE_TIMER_RUNNING);
     emu68_console_puts("[AROS/Emu68] virtual timer interrupts are running\n");
 
@@ -88,6 +128,15 @@ static void coldstart_user(void)
     emu68_console_puts("[AROS/Emu68] InitCode COLDSTART in user mode\n");
     InitCode(RTF_COLDSTART, 0);
     ctx->flags |= EMU68_BOOT_COLDSTART_READY;
+
+    if (FindName(&SysBase->DeviceList, "timer.device"))
+    {
+        ctx->flags |= EMU68_BOOT_TIMER_DEVICE;
+        emu68_console_puts("[AROS/Emu68] timer.device initialized\n");
+    }
+    else
+        emu68_console_puts("[AROS/Emu68] timer.device unavailable\n");
+
     set_stage(ctx, EMU68_STAGE_MULTITASKING);
     emu68_console_puts("[AROS/Emu68] Exec multitasking enabled\n");
 
