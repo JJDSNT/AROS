@@ -53,15 +53,17 @@ extern volatile ULONG emu68_vtimer_ticks;
 
 static struct TagItem emu68_boot_tags[9];
 
-static BOOL timer_device_is_ticking(void)
+static void set_stage(struct Emu68BootContext *ctx, uint32_t stage);
+
+static ULONG timer_device_probe(void)
 {
     struct MsgPort *port;
     struct timerequest *request;
-    BOOL ticking = FALSE;
+    ULONG result = 0;
 
     port = CreateMsgPort();
     if (!port)
-        return FALSE;
+        return 0;
 
     request = (struct timerequest *)
         CreateIORequest(port, sizeof(struct timerequest));
@@ -72,15 +74,28 @@ static BOOL timer_device_is_ticking(void)
         {
             request->tr_node.io_Command = TR_GETSYSTIME;
             DoIO((struct IORequest *)request);
-            ticking = request->tr_time.tv_secs != 0 ||
-                      request->tr_time.tv_micro != 0;
+            if (request->tr_time.tv_secs != 0 ||
+                request->tr_time.tv_micro != 0)
+            {
+                result |= EMU68_BOOT_TIMER_TICKING;
+                emu68_boot_context.flags |= EMU68_BOOT_TIMER_TICKING;
+                set_stage(&emu68_boot_context, EMU68_STAGE_TIMER_DEVICE);
+                emu68_console_puts(
+                    "[AROS/Emu68] timer.device clock is advancing\n");
+
+                request->tr_node.io_Command = TR_ADDREQUEST;
+                request->tr_time.tv_secs = 0;
+                request->tr_time.tv_micro = 40000;
+                if (DoIO((struct IORequest *)request) == 0)
+                    result |= EMU68_BOOT_TIMER_WAKEUP;
+            }
             CloseDevice((struct IORequest *)request);
         }
         DeleteIORequest((struct IORequest *)request);
     }
     DeleteMsgPort(port);
 
-    return ticking;
+    return result;
 }
 
 static void set_stage(struct Emu68BootContext *ctx, uint32_t stage)
@@ -104,16 +119,17 @@ static void scheduler_probe(void)
     while (emu68_vtimer_ticks < 3)
         ;
 
-    if (timer_device_is_ticking())
+    set_stage(&emu68_boot_context, EMU68_STAGE_TIMER_RUNNING);
+
+    if (timer_device_probe() & EMU68_BOOT_TIMER_WAKEUP)
     {
-        emu68_boot_context.flags |= EMU68_BOOT_TIMER_TICKING;
-        set_stage(&emu68_boot_context, EMU68_STAGE_TIMER_DEVICE);
-        emu68_console_puts("[AROS/Emu68] timer.device clock is advancing\n");
+        emu68_boot_context.flags |= EMU68_BOOT_TIMER_WAKEUP;
+        set_stage(&emu68_boot_context, EMU68_STAGE_TIMER_WAKEUP);
+        emu68_console_puts("[AROS/Emu68] timer.device woke the task\n");
     }
     else
-        emu68_console_puts("[AROS/Emu68] timer.device clock is stalled\n");
+        emu68_console_puts("[AROS/Emu68] timer.device request failed\n");
 
-    set_stage(&emu68_boot_context, EMU68_STAGE_TIMER_RUNNING);
     emu68_console_puts("[AROS/Emu68] virtual timer interrupts are running\n");
 
     for (;;)
