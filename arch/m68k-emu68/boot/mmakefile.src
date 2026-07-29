@@ -9,6 +9,7 @@ CORELIBS  := -L$(AROS_LIB) -larossupport -lautoinit -llibinit -lstdc.static -lgc
 
 USER_CPPFLAGS := -D__EMU68__
 USER_CFLAGS   := $(CFLAGS_NO_BUILTIN) -fno-common
+USER_INCLUDES := -I$(SRCDIR)/rom/kernel -I$(SRCDIR)/rom/exec
 
 #MM- kernel-link-emu68-m68k : kernel-kernel-kobj kernel-exec-kobj
 #MM- kernel-link-emu68-m68k-quick : kernel-kernel-kobj-quick kernel-exec-kobj-quick

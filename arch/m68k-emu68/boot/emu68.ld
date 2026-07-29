@@ -7,9 +7,11 @@ SECTIONS
 {
     .text : ALIGN(4)
     {
+        __aros_resident_start = .;
         KEEP(*(.text.boot))
         *(.text .text.*)
         *(.rodata .rodata.*)
+        __aros_resident_end = .;
     }
 
     .data : ALIGN(4)
@@ -28,4 +30,3 @@ SECTIONS
         *(.note .note.*)
     }
 }
-

@@ -4,12 +4,13 @@
 #include <stdint.h>
 
 #define EMU68_BOOT_MAGIC   0x45363842UL /* "E68B" */
-#define EMU68_BOOT_ABI     1
+#define EMU68_BOOT_ABI     2
 
 #define EMU68_BOOT_FDT_VALID       (1UL << 0)
 #define EMU68_BOOT_MEMORY_VALID    (1UL << 1)
 #define EMU68_BOOT_BOOTARGS_VALID  (1UL << 2)
 #define EMU68_BOOT_FRAMEBUFFER     (1UL << 3)
+#define EMU68_BOOT_EXEC_READY      (1UL << 4)
 
 struct Emu68BootContext
 {
@@ -30,6 +31,8 @@ struct Emu68BootContext
 
     const char *bootargs;
     uint32_t bootargs_size;
+
+    void *exec_base;
 };
 
 extern struct Emu68BootContext emu68_boot_context;

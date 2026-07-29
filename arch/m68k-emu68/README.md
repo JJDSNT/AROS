@@ -26,6 +26,7 @@ initramfs aros-emu68-m68k.elf
 The bootstrap translates Emu68's register ABI into `Emu68BootContext`, validates
 the flattened device tree, records its first 32-bit memory range and preserves
 the framebuffer and `/chosen/bootargs` information. The ELF also carries the
-relocatable `kernel.resource` and `exec.library` cores. Creating the initial
-memory headers and entering resident initialization is the next integration
-step.
+relocatable `kernel.resource` and `exec.library` cores. It initializes a TLSF
+memory header from the FDT RAM range and invokes `krnPrepareExecBase`, recording
+the resulting `SysBase` in the boot context. Entering the SINGLETASK resident
+initialization level is the next integration step.

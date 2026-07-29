@@ -8,6 +8,13 @@
 
 #include "boot.h"
 
+#include <aros/kernel.h>
+#include <exec/memory.h>
+#include <utility/tagitem.h>
+
+#include "kernel_base.h"
+#include "kernel_romtags.h"
+
 #define FDT_MAGIC       0xd00dfeedUL
 #define FDT_BEGIN_NODE  1
 #define FDT_END_NODE    2
@@ -30,6 +37,12 @@ struct FdtHeader
 };
 
 struct Emu68BootContext emu68_boot_context;
+
+extern struct TagItem *BootMsg;
+extern char __aros_resident_start[];
+extern char __aros_resident_end[];
+
+static struct TagItem emu68_boot_tags[9];
 
 static uint32_t align4(uint32_t value)
 {
@@ -236,6 +249,72 @@ static void parse_fdt(struct Emu68BootContext *ctx)
     }
 }
 
+static void add_boot_tag(uint32_t *index, uint32_t tag, uint32_t data)
+{
+    emu68_boot_tags[*index].ti_Tag = tag;
+    emu68_boot_tags[*index].ti_Data = data;
+    (*index)++;
+}
+
+static void start_aros(struct Emu68BootContext *ctx)
+{
+    UWORD *ranges[3];
+    struct MemHeader *memory;
+    struct ExecBase *sys_base;
+    uint32_t lower;
+    uint32_t upper;
+    uint32_t tag_index = 0;
+
+    if (!(ctx->flags & EMU68_BOOT_MEMORY_VALID))
+        return;
+
+    upper = ctx->memory_base + ctx->memory_size;
+    if (upper < ctx->memory_base)
+        return;
+
+    /*
+     * Keep the vector table and the absolute SysBase slot at address 4 out of
+     * the allocator. Emu68 has already removed its FDT and the loaded ELF from
+     * the top of the advertised memory range.
+     */
+    lower = ctx->memory_base;
+    if (lower < 0x1000)
+        lower = 0x1000;
+    lower = (lower + 15) & ~15UL;
+
+    if (upper <= lower || upper - lower < 0x10000)
+        return;
+
+    add_boot_tag(&tag_index, KRN_KernelBase,
+                 (uint32_t)__aros_resident_start);
+    add_boot_tag(&tag_index, KRN_KernelLowest,
+                 (uint32_t)__aros_resident_start);
+    add_boot_tag(&tag_index, KRN_KernelHighest,
+                 (uint32_t)__aros_resident_end);
+    add_boot_tag(&tag_index, KRN_MEMLower, lower);
+    add_boot_tag(&tag_index, KRN_MEMUpper, upper);
+    add_boot_tag(&tag_index, KRN_OpenFirmwareTree, (uint32_t)ctx->fdt);
+    if (ctx->flags & EMU68_BOOT_BOOTARGS_VALID)
+        add_boot_tag(&tag_index, KRN_CmdLine, (uint32_t)ctx->bootargs);
+    add_boot_tag(&tag_index, TAG_DONE, 0);
+
+    BootMsg = emu68_boot_tags;
+    memory = (struct MemHeader *)lower;
+    krnCreateTLSFMemHeader("System Memory", 0, memory, upper - lower,
+                           MEMF_FAST | MEMF_PUBLIC | MEMF_KICK | MEMF_LOCAL);
+
+    ranges[0] = (UWORD *)__aros_resident_start;
+    ranges[1] = (UWORD *)__aros_resident_end;
+    ranges[2] = (UWORD *)~0UL;
+
+    sys_base = krnPrepareExecBase(ranges, memory, BootMsg);
+    if (sys_base)
+    {
+        ctx->exec_base = sys_base;
+        ctx->flags |= EMU68_BOOT_EXEC_READY;
+    }
+}
+
 void emu68_bootstrap(const void *fdt, void *framebuffer, uint32_t pitch,
                      uint32_t width, uint32_t height)
 {
@@ -252,11 +331,13 @@ void emu68_bootstrap(const void *fdt, void *framebuffer, uint32_t pitch,
     emu68_boot_context.memory_size = 0;
     emu68_boot_context.bootargs = 0;
     emu68_boot_context.bootargs_size = 0;
+    emu68_boot_context.exec_base = 0;
 
     if (framebuffer && pitch && width && height)
         emu68_boot_context.flags |= EMU68_BOOT_FRAMEBUFFER;
 
     parse_fdt(&emu68_boot_context);
+    start_aros(&emu68_boot_context);
 
     for (;;)
         __asm__ volatile ("stop #0x2700");
