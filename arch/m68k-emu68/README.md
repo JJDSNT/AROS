@@ -23,6 +23,7 @@ Select it in the Raspberry Pi `config.txt` alongside `Emu68.img`:
 initramfs aros-emu68-m68k.elf
 ```
 
-The initial implementation is a loader/ABI bring-up image. It records the
-device-tree and framebuffer arguments supplied by Emu68 and then idles. Exec
-and the rest of AROS will be connected incrementally.
+The bootstrap translates Emu68's register ABI into `Emu68BootContext`, validates
+the flattened device tree, records its first 32-bit memory range and preserves
+the framebuffer and `/chosen/bootargs` information. Exec and the rest of AROS
+will be connected incrementally.

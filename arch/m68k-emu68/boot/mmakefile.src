@@ -1,12 +1,12 @@
 include $(SRCDIR)/config/aros.cfg
 
 TARGETDIR := $(GENDIR)/$(CURDIR)
-BOOTOBJ   := $(TARGETDIR)/entry.o
+BOOTOBJ   := $(TARGETDIR)/entry.o $(TARGETDIR)/boot.o
 BOOTELF   := $(AROSDIR)/aros-emu68-m68k.elf
 BOOTMAP   := $(GENDIR)/boot/aros-emu68-m68k.elf.map
 
 USER_CPPFLAGS := -D__EMU68__
-USER_CFLAGS   := $(CFLAGS_NO_BUILTIN)
+USER_CFLAGS   := $(CFLAGS_NO_BUILTIN) -fno-common
 
 #MM kernel-link-emu68-m68k: $(BOOTELF)
 #MM kernel-link-emu68-m68k-quick: $(BOOTELF)
@@ -25,6 +25,10 @@ $(BOOTELF): $(BOOTOBJ) $(SRCDIR)/$(CURDIR)/emu68.ld
 $(TARGETDIR)/%.o: %.S
 	@$(MKDIR) $(@D)
 	%compile_q cmd="$(KERNEL_CC)" opt="$(strip $(AFLAGS) $(TARGET_CFLAGS) $(CPPFLAGS))"
+
+$(TARGETDIR)/%.o: %.c
+	@$(MKDIR) $(@D)
+	%compile_q cmd="$(KERNEL_CC)" opt="$(strip $(CFLAGS) $(CPPFLAGS))"
 
 #MM
 clean ::

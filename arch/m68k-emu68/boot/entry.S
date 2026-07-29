@@ -19,37 +19,26 @@
 	.type _start,@function
 
 _start:
-	move.l	%a6,emu68_fdt
-	move.l	%a0,emu68_framebuffer
-	move.l	%d0,emu68_framebuffer_pitch
-	move.l	%d1,emu68_framebuffer_width
-	move.l	%d2,emu68_framebuffer_height
+	/*
+	 * GCC's m68k ABI passes arguments on the stack, right to left.
+	 * Preserve Emu68's register ABI in a normal C call:
+	 *
+	 * emu68_bootstrap(fdt, framebuffer, pitch, width, height)
+	 */
+	move.l	%d2,-(%sp)
+	move.l	%d1,-(%sp)
+	move.l	%d0,-(%sp)
+	move.l	%a0,-(%sp)
+	move.l	%a6,-(%sp)
+	jsr	emu68_bootstrap
+	lea	20(%sp),%sp
 
 	/*
-	 * Milestone-one handoff: the loader has entered our ELF and its ABI has
-	 * been captured. Exec initialization will replace this idle loop.
+	 * emu68_bootstrap() is noreturn. Keep a safe fallback if that contract
+	 * is ever accidentally broken.
 	 */
 1:
 	stop	#0x2700
 	bra.s	1b
 
 	.size _start,.-_start
-
-	.section .bss,"aw",@nobits
-	.balign 4
-	.globl emu68_fdt
-emu68_fdt:
-	.space 4
-	.globl emu68_framebuffer
-emu68_framebuffer:
-	.space 4
-	.globl emu68_framebuffer_pitch
-emu68_framebuffer_pitch:
-	.space 4
-	.globl emu68_framebuffer_width
-emu68_framebuffer_width:
-	.space 4
-	.globl emu68_framebuffer_height
-emu68_framebuffer_height:
-	.space 4
-
