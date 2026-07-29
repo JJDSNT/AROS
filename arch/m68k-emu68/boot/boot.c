@@ -83,6 +83,23 @@ static void coldstart_user(void)
     else
         emu68_console_puts("[AROS/Emu68] timer.device unavailable\n");
 
+    if (FindName(&SysBase->LibList, "utility.library") &&
+        FindName(&SysBase->LibList, "oop.library") &&
+        FindName(&SysBase->LibList, "hiddclass.hidd"))
+        emu68_console_puts(
+            "[AROS/Emu68] utility/oop/HIDD residents initialized\n");
+    else
+        emu68_console_puts(
+            "[AROS/Emu68] foundational resident initialization failed\n");
+
+    if (FindName(&SysBase->ResourceList, "bootloader.resource") &&
+        FindName(&SysBase->LibList, "gfx.hidd"))
+        emu68_console_puts(
+            "[AROS/Emu68] bootloader/gfx HIDD residents initialized\n");
+    else
+        emu68_console_puts(
+            "[AROS/Emu68] pre-graphics resident initialization failed\n");
+
     emu68_set_stage(EMU68_STAGE_MULTITASKING);
     emu68_console_puts("[AROS/Emu68] Exec multitasking enabled\n");
 
