@@ -46,7 +46,8 @@ extern char __aros_resident_end[];
 extern void Exec_Supervisor_Trap(void);
 extern void emu68_enter_user(void (*entry)(void), void *stack)
     __attribute__((noreturn));
-extern BOOL emu68_vtimer_start(ULONG interval_us);
+extern BOOL emu68_vtimer_start(ULONG base, ULONG irq_level,
+                               ULONG interval_us);
 extern volatile ULONG emu68_vtimer_ticks;
 
 static struct TagItem emu68_boot_tags[9];
@@ -90,7 +91,8 @@ static void coldstart_user(void)
     set_stage(ctx, EMU68_STAGE_MULTITASKING);
     emu68_console_puts("[AROS/Emu68] Exec multitasking enabled\n");
 
-    if (emu68_vtimer_start(20000))
+    if ((ctx->flags & EMU68_BOOT_TIMER_VALID) &&
+        emu68_vtimer_start(ctx->timer_base, ctx->timer_irq, 20000))
         emu68_console_puts("[AROS/Emu68] virtual timer enabled\n");
     else
         emu68_console_puts("[AROS/Emu68] virtual timer not found\n");
@@ -146,6 +148,20 @@ static int node_is_memory(const char *name, const uint8_t *limit)
            (name[i] == '\0' || name[i] == '@');
 }
 
+static int node_is_virtual_timer(const char *name, const uint8_t *limit)
+{
+    static const char prefix[] = "virtual-timer@";
+    uint32_t i;
+
+    for (i = 0; i < sizeof(prefix) - 1; i++)
+    {
+        if ((const uint8_t *)&name[i] >= limit || name[i] != prefix[i])
+            return 0;
+    }
+
+    return 1;
+}
+
 static const char *fdt_string(const uint8_t *strings, uint32_t strings_size,
                               uint32_t offset)
 {
@@ -194,6 +210,8 @@ static void parse_fdt(struct Emu68BootContext *ctx)
     uint32_t depth = 0;
     int in_memory = 0;
     int in_chosen = 0;
+    int in_virtual_timer = 0;
+    int virtual_timer_compatible = 0;
 
     if (!header || header->magic != FDT_MAGIC ||
         header->totalsize < sizeof(*header))
@@ -233,12 +251,30 @@ static void parse_fdt(struct Emu68BootContext *ctx)
                         bounded_string_equal(name,
                                              (uint32_t)(cursor - structure + 1),
                                              "chosen");
+            in_virtual_timer =
+                depth == 3 && node_is_virtual_timer(name, structure_end);
+            if (in_virtual_timer)
+            {
+                virtual_timer_compatible = 0;
+                ctx->timer_base = 0;
+                ctx->timer_size = 0;
+                ctx->timer_irq = 0;
+                ctx->timer_frequency = 0;
+            }
             structure += align4((uint32_t)(cursor - structure + 1));
         }
         else if (token == FDT_END_NODE)
         {
             if (depth == 0)
                 return;
+            if (depth == 3 && in_virtual_timer)
+            {
+                if (virtual_timer_compatible && ctx->timer_base &&
+                    ctx->timer_size && ctx->timer_irq > 0 &&
+                    ctx->timer_irq < 8)
+                    ctx->flags |= EMU68_BOOT_TIMER_VALID;
+                in_virtual_timer = 0;
+            }
             if (depth == 2)
             {
                 in_memory = 0;
@@ -297,6 +333,26 @@ static void parse_fdt(struct Emu68BootContext *ctx)
                 ctx->bootargs = (const char *)value;
                 ctx->bootargs_size = length;
                 ctx->flags |= EMU68_BOOT_BOOTARGS_VALID;
+            }
+            else if (in_virtual_timer)
+            {
+                if (bounded_string_equal(name, 11, "compatible") &&
+                    length == 23 &&
+                    bounded_string_equal((const char *)value, length,
+                                         "emu68,virtual-timer-v1"))
+                    virtual_timer_compatible = 1;
+                else if (bounded_string_equal(name, 4, "reg") &&
+                         length >= 2 * sizeof(uint32_t))
+                {
+                    ctx->timer_base = ((const uint32_t *)value)[0];
+                    ctx->timer_size = ((const uint32_t *)value)[1];
+                }
+                else if (bounded_string_equal(name, 11, "interrupts") &&
+                         length >= sizeof(uint32_t))
+                    ctx->timer_irq = *(const uint32_t *)value;
+                else if (bounded_string_equal(name, 16, "clock-frequency") &&
+                         length >= sizeof(uint32_t))
+                    ctx->timer_frequency = *(const uint32_t *)value;
             }
 
             structure += align4(length);

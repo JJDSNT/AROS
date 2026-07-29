@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define EMU68_BOOT_MAGIC   0x45363842UL /* "E68B" */
-#define EMU68_BOOT_ABI     5
+#define EMU68_BOOT_ABI     6
 
 #define EMU68_BOOT_FDT_VALID       (1UL << 0)
 #define EMU68_BOOT_MEMORY_VALID    (1UL << 1)
@@ -15,6 +15,7 @@
 #define EMU68_BOOT_COLDSTART_READY (1UL << 6)
 #define EMU68_BOOT_SCHEDULER_ENTER (1UL << 7)
 #define EMU68_BOOT_TASK_RUNNING    (1UL << 8)
+#define EMU68_BOOT_TIMER_VALID     (1UL << 9)
 
 #define EMU68_STAGE_ENTRY          0x45303031UL /* "E001" */
 #define EMU68_STAGE_EXEC_READY     0x45303032UL /* "E002" */
@@ -46,6 +47,11 @@ struct Emu68BootContext
 
     const char *bootargs;
     uint32_t bootargs_size;
+
+    uint32_t timer_base;
+    uint32_t timer_size;
+    uint32_t timer_irq;
+    uint32_t timer_frequency;
 
     void *exec_base;
     uint32_t stage;

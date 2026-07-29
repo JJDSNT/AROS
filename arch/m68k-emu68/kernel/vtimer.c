@@ -18,22 +18,21 @@
 
 #include "exec_platform.h"
 
-#define EMU68_VTIMER_BASE        0xf0000000UL
 #define EMU68_VTIMER_ID          0x45365431UL
 #define EMU68_VTIMER_INTERVAL    0x14
 #define EMU68_VTIMER_CONTROL     0x18
 #define EMU68_VTIMER_ACK         0x20
 #define EMU68_VTIMER_ENABLE      0x01
 #define EMU68_VTIMER_PERIODIC    0x02
-#define EMU68_VTIMER_VECTOR      29
 #define EMU68_IRQ_VTIMER         0
 
 volatile ULONG emu68_vtimer_ticks = 0;
 static APTR vtimer_irq_handle;
+static ULONG vtimer_base;
 
 static inline volatile ULONG *vtimer_reg(ULONG offset)
 {
-    return (volatile ULONG *)(EMU68_VTIMER_BASE + offset);
+    return (volatile ULONG *)(vtimer_base + offset);
 }
 
 static void emu68_vtimer_heartbeat(void *unused, void *unused2)
@@ -48,19 +47,19 @@ static void emu68_vtimer_heartbeat(void *unused, void *unused2)
         core_Cause(INTB_VERTB, 1L << INTB_VERTB);
 }
 
-BOOL Emu68_VTimer_Level5(void)
+BOOL Emu68_VTimer_Autovector(void)
 {
     krnRunIRQHandlers(KernelBase, EMU68_IRQ_VTIMER);
     return TRUE;
 }
 
-void Emu68_VTimer_Level5_Direct(void);
+void Emu68_VTimer_Autovector_Direct(void);
 asm (
-    "   .global Emu68_VTimer_Level5_Direct\n"
-    "   .type Emu68_VTimer_Level5_Direct,@function\n"
-    "Emu68_VTimer_Level5_Direct:\n"
+    "   .global Emu68_VTimer_Autovector_Direct\n"
+    "   .type Emu68_VTimer_Autovector_Direct,@function\n"
+    "Emu68_VTimer_Autovector_Direct:\n"
     "   movem.l %d0/%d1/%a0/%a1/%a5/%a6,%sp@-\n"
-    "   jsr     Emu68_VTimer_Level5\n"
+    "   jsr     Emu68_VTimer_Autovector\n"
     "   tst.w   %d0\n"
     "   beq     0f\n"
     "   jmp     Exec_6_ExitIntr\n"
@@ -69,10 +68,14 @@ asm (
     "   rte\n"
 );
 
-BOOL emu68_vtimer_start(ULONG interval_us)
+BOOL emu68_vtimer_start(ULONG base, ULONG irq_level, ULONG interval_us)
 {
     volatile APTR *vectors = (volatile APTR *)0;
 
+    if (!base || irq_level == 0 || irq_level > 7)
+        return FALSE;
+
+    vtimer_base = base;
     if (*vtimer_reg(0) != EMU68_VTIMER_ID)
         return FALSE;
 
@@ -84,7 +87,7 @@ BOOL emu68_vtimer_start(ULONG interval_us)
         return FALSE;
 
     emu68_vtimer_ticks = 0;
-    vectors[EMU68_VTIMER_VECTOR] = Emu68_VTimer_Level5_Direct;
+    vectors[24 + irq_level] = Emu68_VTimer_Autovector_Direct;
     *vtimer_reg(EMU68_VTIMER_INTERVAL) = interval_us;
     *vtimer_reg(EMU68_VTIMER_CONTROL) =
         EMU68_VTIMER_ENABLE | EMU68_VTIMER_PERIODIC;
