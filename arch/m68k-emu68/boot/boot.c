@@ -108,6 +108,21 @@ static void coldstart_user(void)
         emu68_console_puts(
             "[AROS/Emu68] graphics.library initialization failed\n");
 
+    if (FindName(&SysBase->LibList, "layers.library"))
+        emu68_console_puts("[AROS/Emu68] layers.library initialized\n");
+    else
+        emu68_console_puts("[AROS/Emu68] layers.library initialization failed\n");
+
+    if (FindName(&SysBase->LibList, "keymap.library"))
+        emu68_console_puts("[AROS/Emu68] keymap.library initialized\n");
+    else
+        emu68_console_puts("[AROS/Emu68] keymap.library initialization failed\n");
+
+    if (FindName(&SysBase->DeviceList, "input.device"))
+        emu68_console_puts("[AROS/Emu68] input.device initialized\n");
+    else
+        emu68_console_puts("[AROS/Emu68] input.device initialization failed\n");
+
     emu68_set_stage(EMU68_STAGE_MULTITASKING);
     emu68_console_puts("[AROS/Emu68] Exec multitasking enabled\n");
 

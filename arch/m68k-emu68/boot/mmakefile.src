@@ -6,11 +6,13 @@ BOOTOBJ   := $(TARGETDIR)/entry.o $(TARGETDIR)/usermode.o $(TARGETDIR)/boot.o \
              $(TARGETDIR)/font8x14.o
 BOOTELF   := $(AROSDIR)/aros-emu68-m68k.elf
 BOOTMAP   := $(GENDIR)/boot/aros-emu68-m68k.elf.map
-COREOBJS  := $(KOBJSDIR)/kernel_resource.o $(KOBJSDIR)/exec_library.o \
-             $(KOBJSDIR)/timer_device.o $(KOBJSDIR)/utility_library.o \
-             $(KOBJSDIR)/oop_library.o $(KOBJSDIR)/hiddclass_hidd.o \
-             $(KOBJSDIR)/bootloader_resource.o $(KOBJSDIR)/gfx_hidd.o \
-             $(KOBJSDIR)/graphics_library.o
+COREPUBLIC := $(KOBJSDIR)/kernel_resource.o $(KOBJSDIR)/exec_library.o
+CORERESIDENTS := timer_device utility_library oop_library hiddclass_hidd \
+                 bootloader_resource gfx_hidd graphics_library layers_library \
+                 keymap_library inputclass_hidd keyboard_hidd mouse_hidd \
+                 keyboard_device gameport_device input_device
+CORELOCAL := $(addprefix $(KOBJSDIR)/,$(addsuffix .emu68.ko,$(CORERESIDENTS)))
+COREOBJS  := $(COREPUBLIC) $(CORELOCAL)
 CORELIBS  := -L$(AROS_LIB) -larossupport -lautoinit -llibinit -lamiga \
              -lstdc.static -lgcc
 
@@ -18,8 +20,8 @@ USER_CPPFLAGS := -D__EMU68__
 USER_CFLAGS   := $(CFLAGS_NO_BUILTIN) -fno-common
 USER_INCLUDES := -I$(SRCDIR)/rom/kernel -I$(SRCDIR)/rom/exec
 
-#MM- kernel-link-emu68-m68k : kernel-kernel-kobj kernel-exec-kobj kernel-timer-kobj kernel-utility-kobj kernel-oop-kobj kernel-hidd-kobj kernel-bootloader-kobj kernel-hidd-gfx-kobj kernel-graphics-kobj
-#MM- kernel-link-emu68-m68k-quick : kernel-kernel-kobj-quick kernel-exec-kobj-quick kernel-timer-kobj-quick kernel-utility-kobj-quick kernel-oop-kobj-quick kernel-hidd-kobj-quick kernel-bootloader-kobj-quick kernel-hidd-gfx-kobj-quick kernel-graphics-kobj-quick
+#MM- kernel-link-emu68-m68k : kernel-kernel-kobj kernel-exec-kobj kernel-timer-kobj kernel-utility-kobj kernel-oop-kobj kernel-hidd-kobj kernel-bootloader-kobj kernel-hidd-gfx-kobj kernel-graphics-kobj kernel-layers-kobj kernel-keymap-kobj kernel-hidd-input-kobj kernel-hidd-kbd-kobj kernel-hidd-mouse-kobj kernel-keyboard-kobj kernel-gameport-kobj kernel-input-kobj
+#MM- kernel-link-emu68-m68k-quick : kernel-kernel-kobj-quick kernel-exec-kobj-quick kernel-timer-kobj-quick kernel-utility-kobj-quick kernel-oop-kobj-quick kernel-hidd-kobj-quick kernel-bootloader-kobj-quick kernel-hidd-gfx-kobj-quick kernel-graphics-kobj-quick kernel-layers-kobj-quick kernel-keymap-kobj-quick kernel-hidd-input-kobj-quick kernel-hidd-kbd-kobj-quick kernel-hidd-mouse-kobj-quick kernel-keyboard-kobj-quick kernel-gameport-kobj-quick kernel-input-kobj-quick
 #MM kernel-link-emu68-m68k: $(BOOTELF)
 #MM kernel-link-emu68-m68k-quick: $(BOOTELF)
 kernel-link-emu68-m68k: $(BOOTELF)
@@ -36,6 +38,10 @@ $(BOOTELF): $(BOOTOBJ) $(COREOBJS) $(SRCDIR)/$(CURDIR)/emu68.ld
 		-o $@ $(BOOTOBJ) $(COREOBJS) $(CORELIBS)
 	$(Q)$(TARGET_STRIP) $(TARGET_STRIP_FLAGS) $@
 
+$(KOBJSDIR)/%.emu68.ko: $(KOBJSDIR)/%.o
+	$(Q)$(NM_PLAIN) --defined-only $< | cut -d' ' -f3 >$@.sym
+	$(Q)$(OBJCOPY) --localize-symbols $@.sym $< $@
+
 $(TARGETDIR)/%.o: %.S
 	@$(MKDIR) $(@D)
 	%compile_q cmd="$(KERNEL_CC)" opt="$(strip $(AFLAGS) $(TARGET_CFLAGS) $(CPPFLAGS))"
@@ -50,4 +56,5 @@ $(TARGETDIR)/font8x14.o: $(SRCDIR)/arch/all-native/bootconsole/font8x14.c
 
 #MM
 clean ::
-	-$(RM) $(BOOTELF) $(BOOTMAP) $(BOOTOBJ)
+	-$(RM) $(BOOTELF) $(BOOTMAP) $(BOOTOBJ) $(CORELOCAL) \
+	    $(addsuffix .sym,$(CORELOCAL))

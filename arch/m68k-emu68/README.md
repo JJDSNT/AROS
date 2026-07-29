@@ -26,10 +26,30 @@ initramfs aros-emu68-m68k.elf
 The bootstrap translates Emu68's register ABI into `Emu68BootContext`, validates
 the flattened device tree, records its first 32-bit memory range and preserves
 the framebuffer and `/chosen/bootargs` information. The ELF carries relocatable
-`kernel.resource`, `exec.library`, and `timer.device` residents. It initializes
-a TLSF memory header from the FDT RAM range, creates `SysBase`, runs the
-SINGLETASK and COLDSTART resident levels, enables multitasking and enters the
-Exec scheduler.
+core, OOP/HIDD, timer and graphics residents. It initializes a TLSF memory
+header from the FDT RAM range, creates `SysBase`, runs the SINGLETASK and
+COLDSTART resident levels, enables multitasking and enters the Exec scheduler.
+
+## m68k Exec ABI
+
+The classic m68k Exec ABI documents `Permit()`, `ObtainSemaphore()`,
+`ReleaseSemaphore()` and `ObtainSemaphoreShared()` as preserving
+`D0-D1/A0-A1`. Their C implementations use the normal AROS register-clobber
+convention, so an m68k bootstrap must install preserving vector wrappers after
+`krnPrepareExecBase()` has completed.
+
+Historically this adaptation lived in the Amiga board bootstrap even though it
+contains no Amiga chipset knowledge. The wrappers and their installer now live
+in `arch/m68k-all/exec`; the Emu68 bootstrap explicitly installs them after
+creating `SysBase`. The helper is inert for other m68k targets until their own
+bootstrap calls it. This provides a path for Atari, Macintosh or other m68k
+targets to adopt the same ABI fix independently, without changing their
+hardware boundary or boot sequence.
+
+The target also links `libamiga.a`. Despite its historical name, the code used
+here is the compiler `alib` compatibility layer, providing ABI-level helpers
+such as `StrDup()` and `GetDataStreamFromFormat()`. Linking it does not import
+CIA, Paula, Gayle, custom-chip or other Amiga hardware dependencies.
 
 ## Virtual platform timer
 
