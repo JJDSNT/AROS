@@ -101,12 +101,13 @@ static void coldstart_user(void)
         emu68_console_puts(
             "[AROS/Emu68] pre-graphics resident initialization failed\n");
 
-    if (FindName(&SysBase->LibList, "graphics.library"))
+    if (FindName(&SysBase->LibList, "emu68gfx.hidd") &&
+        FindName(&SysBase->LibList, "graphics.library"))
         emu68_console_puts(
-            "[AROS/Emu68] graphics.library initialized without display driver\n");
+            "[AROS/Emu68] graphics.library initialized with Emu68 display driver\n");
     else
         emu68_console_puts(
-            "[AROS/Emu68] graphics.library initialization failed\n");
+            "[AROS/Emu68] graphics/display driver initialization failed\n");
 
     if (FindName(&SysBase->LibList, "layers.library"))
         emu68_console_puts("[AROS/Emu68] layers.library initialized\n");
@@ -122,6 +123,11 @@ static void coldstart_user(void)
         emu68_console_puts("[AROS/Emu68] input.device initialized\n");
     else
         emu68_console_puts("[AROS/Emu68] input.device initialization failed\n");
+
+    if (FindName(&SysBase->LibList, "intuition.library"))
+        emu68_console_puts("[AROS/Emu68] intuition.library initialized\n");
+    else
+        emu68_console_puts("[AROS/Emu68] intuition.library initialization failed\n");
 
     emu68_set_stage(EMU68_STAGE_MULTITASKING);
     emu68_console_puts("[AROS/Emu68] Exec multitasking enabled\n");
@@ -462,7 +468,8 @@ static void start_aros(struct Emu68BootContext *ctx)
     BootMsg = emu68_boot_tags;
     memory = (struct MemHeader *)lower;
     krnCreateTLSFMemHeader("System Memory", 0, memory, upper - lower,
-                           MEMF_FAST | MEMF_PUBLIC | MEMF_KICK | MEMF_LOCAL);
+                           MEMF_CHIP | MEMF_FAST | MEMF_PUBLIC |
+                           MEMF_KICK | MEMF_LOCAL);
 
     ranges[0] = (UWORD *)__aros_resident_start;
     ranges[1] = (UWORD *)__aros_resident_end;

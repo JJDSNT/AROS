@@ -51,6 +51,26 @@ here is the compiler `alib` compatibility layer, providing ABI-level helpers
 such as `StrDup()` and `GetDataStreamFromFormat()`. Linking it does not import
 CIA, Paula, Gayle, custom-chip or other Amiga hardware dependencies.
 
+## Emu68 framebuffer HIDD
+
+`emu68gfx.hidd` is the AROS-side adapter for the linear framebuffer handed to
+the m68k ELF by Emu68. Emu68 remains responsible for initializing the physical
+display and passes the address, pitch, width and height in the entry ABI. The
+driver advertises one fixed RGB565 little-endian mode matching that contract.
+
+Displayable AROS bitmaps remain ordinary managed chunky bitmaps. `Show()` marks
+one of them visible, and `UpdateRect()` copies only its changed rectangle to the
+physical framebuffer. This keeps Raspberry Pi mailbox, VideoCore and other
+bare-metal details outside AROS while preserving the normal graphics HIDD and
+`graphics.library` boundary.
+
+Emu68 exposes a unified memory domain rather than separate Amiga chip and fast
+RAM. The system memory header consequently satisfies both `MEMF_CHIP` and
+`MEMF_FAST`. This is needed by generic graphics compatibility paths such as
+`AllocSpriteDataA()`, which still request `MEMF_CHIP`; it does not imply the
+presence of an Amiga chipset. AArch64 native targets solve the same legacy
+requirement by removing `MEMF_CHIP` in their platform allocator.
+
 ## Virtual platform timer
 
 Emu68 owns the physical ARM timer and publishes an `emu68,virtual-timer-v1`
