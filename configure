@@ -11321,6 +11321,40 @@ printf "%s\n" "$darwin_sdk_path" >&6; }
         aros_target_mkdep="$aros_target_mkdep -D__GNUC__ -Dthumb"
         ;;
 
+    emu68*)
+        aros_flavour="standalone"
+        aros_target_arch="emu68"
+        aros_shared_default="no"
+
+        case "$target_cpu" in
+            *m68k*)
+                aros_target_cpu="m68k"
+                aros_object_format="m68kelf"
+                gcc_target_cpu="m68000"
+                llvm_target_cpu="M68k"
+                aros_isa_flags="$""(ISA_MC68040_FLAGS)"
+                aros_target_mkdep="$aros_target_mkdep -D__GNUC__ -D__mc68000__ -D__EMU68__"
+                aros_config_cppflags="$aros_config_cppflags -D__EMU68__"
+                aros_config_cflags="$aros_config_cflags $""(CFLAGS_NO_STRICT_ALIASING) $""(CFLAGS_FREESTANDING) $""(CFLAGS_OMIT_FP) $""(CFLAGS_BUILTIN)"
+                aros_config_cxxflags="$aros_config_cxxflags $""(CFLAGS_NO_STRICT_ALIASING) $""(CFLAGS_OMIT_FP) $""(CFLAGS_BUILTIN)"
+                aros_target_strip_flags="-R.comment --strip-debug"
+                if test "$optimization" = "default"; then
+                    optimization_level=$toolchain_size_opt_lvl
+                fi
+                ;;
+            *)
+                as_fn_error $? "\"Unsupported CPU for Emu68 $target_cpu\"" "$LINENO" 5
+                ;;
+        esac
+
+        aros_kernel_toolchain=$aros_toolchain
+        kernel_toolchain_c_compiler=$toolchain_c_compiler
+        kernel_toolchain_cxx_compiler=$toolchain_cxx_compiler
+        if test "$aros_kernel_toolchain" = "llvm"; then
+            aros_kernel_llvmwrapper=yes
+        fi
+        ;;
+
     amiga*)
         # Extract the first word of "gzip", so it can be a program name with args.
 set dummy gzip; ac_word=$2
@@ -21622,7 +21656,6 @@ fi
 aros_shared_ar="$aros_shared_ld $aros_shared_ldflags -o"
 
 if test -n "$aros_shared_cflags" ; then
-    echo "SHARED_CFLAGS := $aros_shared_cflags" >> ${aros_hostcfg_dir}/host.cfg
-    echo "SHARED_AR := $aros_shared_ar" >> ${aros_hostcfg_dir}/host.cfg
+        echo "SHARED_CFLAGS := $aros_shared_cflags" >> ${aros_hostcfg_dir}/host.cfg
+        echo "SHARED_AR := $aros_shared_ar" >> ${aros_hostcfg_dir}/host.cfg
 fi
-

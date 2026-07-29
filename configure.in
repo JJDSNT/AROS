@@ -2207,6 +2207,42 @@ case "$target_os" in
         aros_target_mkdep="$aros_target_mkdep -D__GNUC__ -Dthumb"
         ;;
 
+    emu68*)
+        aros_flavour="standalone"
+        aros_target_arch="emu68"
+        aros_shared_default="no"
+
+        case "$target_cpu" in
+            *m68k*)
+                aros_target_cpu="m68k"
+                aros_object_format="m68kelf"
+                gcc_target_cpu="m68000"
+                llvm_target_cpu="M68k"
+                aros_isa_flags="$""(ISA_MC68040_FLAGS)"
+                aros_target_mkdep="$aros_target_mkdep -D__GNUC__ -D__mc68000__ -D__EMU68__"
+                aros_config_cppflags="$aros_config_cppflags -D__EMU68__"
+                aros_config_cflags="$aros_config_cflags $""(CFLAGS_NO_STRICT_ALIASING) $""(CFLAGS_FREESTANDING) $""(CFLAGS_OMIT_FP) $""(CFLAGS_BUILTIN)"
+                aros_config_cxxflags="$aros_config_cxxflags $""(CFLAGS_NO_STRICT_ALIASING) $""(CFLAGS_OMIT_FP) $""(CFLAGS_BUILTIN)"
+                aros_target_strip_flags="-R.comment --strip-debug"
+                if test "$optimization" = "default"; then
+                    optimization_level=$toolchain_size_opt_lvl
+                fi
+                ;;
+            *)
+                AC_MSG_ERROR("Unsupported CPU for Emu68 $target_cpu")
+                ;;
+        esac
+
+        dnl The in-tree AROS cross toolchain emits both kernel and userspace
+        dnl objects for this freestanding target.
+        aros_kernel_toolchain=$aros_toolchain
+        kernel_toolchain_c_compiler=$toolchain_c_compiler
+        kernel_toolchain_cxx_compiler=$toolchain_cxx_compiler
+        if test "$aros_kernel_toolchain" = "llvm"; then
+            aros_kernel_llvmwrapper=yes
+        fi
+        ;;
+
     amiga*)
         AROS_PROG(GZIP,[gzip])
         host_extra_cfg+="$export_newline""GZIP                          := $GZIP"

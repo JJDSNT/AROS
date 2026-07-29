@@ -1,0 +1,31 @@
+include $(SRCDIR)/config/aros.cfg
+
+TARGETDIR := $(GENDIR)/$(CURDIR)
+BOOTOBJ   := $(TARGETDIR)/entry.o
+BOOTELF   := $(AROSDIR)/aros-emu68-m68k.elf
+BOOTMAP   := $(GENDIR)/boot/aros-emu68-m68k.elf.map
+
+USER_CPPFLAGS := -D__EMU68__
+USER_CFLAGS   := $(CFLAGS_NO_BUILTIN)
+
+#MM kernel-link-emu68-m68k: $(BOOTELF)
+#MM kernel-link-emu68-m68k-quick: $(BOOTELF)
+kernel-link-emu68-m68k: $(BOOTELF)
+kernel-link-emu68-m68k-quick: $(BOOTELF)
+
+$(BOOTELF): $(BOOTOBJ) $(SRCDIR)/$(CURDIR)/emu68.ld
+	@$(MKDIR) $(AROSDIR) $(GENDIR)/boot
+	@$(ECHO) "Linking $@"
+	$(Q)$(KERNEL_CC) -nostdlib -nostartfiles -static \
+		-Wl,-r -Wl,-Map=$(BOOTMAP) \
+		-Wl,-T,$(SRCDIR)/$(CURDIR)/emu68.ld \
+		-o $@ $(BOOTOBJ)
+	$(Q)$(TARGET_STRIP) $(TARGET_STRIP_FLAGS) $@
+
+$(TARGETDIR)/%.o: %.S
+	@$(MKDIR) $(@D)
+	%compile_q cmd="$(KERNEL_CC)" opt="$(strip $(AFLAGS) $(TARGET_CFLAGS) $(CPPFLAGS))"
+
+#MM
+clean ::
+	-$(RM) $(BOOTELF) $(BOOTMAP) $(BOOTOBJ)
