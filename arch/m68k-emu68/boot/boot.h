@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define EMU68_BOOT_MAGIC   0x45363842UL /* "E68B" */
-#define EMU68_BOOT_ABI     6
+#define EMU68_BOOT_ABI     7
 
 #define EMU68_BOOT_FDT_VALID       (1UL << 0)
 #define EMU68_BOOT_MEMORY_VALID    (1UL << 1)
@@ -19,6 +19,11 @@
 #define EMU68_BOOT_TIMER_DEVICE    (1UL << 10)
 #define EMU68_BOOT_TIMER_TICKING   (1UL << 11)
 #define EMU68_BOOT_TIMER_WAKEUP    (1UL << 12)
+#define EMU68_BOOT_TIMER_COHERENT  (1UL << 13)
+#define EMU68_BOOT_TIMER_CONCURRENT (1UL << 14)
+#define EMU68_BOOT_TIMER_ABORT      (1UL << 15)
+#define EMU68_BOOT_TIMER_PREEMPT    (1UL << 16)
+#define EMU68_BOOT_TIMER_SOAK       (1UL << 17)
 
 #define EMU68_STAGE_ENTRY          0x45303031UL /* "E001" */
 #define EMU68_STAGE_EXEC_READY     0x45303032UL /* "E002" */
@@ -31,7 +36,14 @@
 #define EMU68_STAGE_TIMER_RUNNING  0x45303039UL /* "E009" */
 #define EMU68_STAGE_TIMER_DEVICE   0x45303130UL /* "E010" */
 #define EMU68_STAGE_TIMER_WAKEUP   0x45303131UL /* "E011" */
-#define EMU68_STAGE_SCHED_RETURN   0x45303132UL /* "E012" */
+#define EMU68_STAGE_TIMER_COHERENT 0x45303132UL /* "E012" */
+#define EMU68_STAGE_TIMER_CONCURRENT 0x45303133UL /* "E013" */
+#define EMU68_STAGE_TIMER_ABORT    0x45303134UL /* "E014" */
+#define EMU68_STAGE_TIMER_SOAK     0x45303135UL /* "E015" */
+#define EMU68_STAGE_TIMER_MINUTE1  0x45303136UL /* "E016" */
+#define EMU68_STAGE_TIMER_MINUTE2  0x45303137UL /* "E017" */
+#define EMU68_STAGE_TIMER_COMPLETE 0x45303138UL /* "E018" */
+#define EMU68_STAGE_SCHED_RETURN   0x45303139UL /* "E019" */
 
 struct Emu68BootContext
 {
@@ -57,6 +69,7 @@ struct Emu68BootContext
     uint32_t timer_size;
     uint32_t timer_irq;
     uint32_t timer_frequency;
+    uint32_t timer_soak_seconds;
 
     void *exec_base;
     uint32_t stage;

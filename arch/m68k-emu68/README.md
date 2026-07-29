@@ -45,7 +45,22 @@ knowledge. Its period is derived from `SysBase->VBlankFrequency`.
 The bootstrap probe validates both synchronous `TR_GETSYSTIME` and an
 asynchronous 40 ms `TR_ADDREQUEST`. During the latter, the probe task blocks,
 the scheduler returns to the bootstrap task, and the virtual timer wakes the
-probe through the normal Exec device path.
+probe through the normal Exec device path. A second `TR_GETSYSTIME` also checks
+that at least the requested 40 ms elapsed on the device clock.
+
+The scheduler/timer stress probe then:
+
+- queues simultaneous 40 ms and 80 ms requests and verifies their completion
+  order;
+- cancels a pending five-second request with `AbortIO()` and checks for
+  `IOERR_ABORTED`;
+- runs two CPU-bound tasks at the same priority while the probe task repeatedly
+  blocks;
+- submits 120 consecutive one-second requests and requires both worker tasks to
+  make progress during every wait.
+
+This two-minute soak exercises asynchronous interrupt completion, ready/wait
+task lists, timer request queues, preemption, and equal-priority round-robin.
 
 ## QEMU validation
 
@@ -76,8 +91,10 @@ the m68k vector table:
 xp /4bx 0x400
 ```
 
-The currently validated final marker is `45 30 31 31` (`E011`), meaning that
+The currently validated final marker is `45 30 31 38` (`E018`), meaning that
 Exec initialized, scheduled a user task, received virtual timer interrupts,
 advanced `timer.device`, blocked on `TR_ADDREQUEST`, and woke the task again.
-Use `screendump /tmp/aros.ppm` in the QEMU monitor to capture the framebuffer
-console.
+It additionally confirms coherent elapsed time, simultaneous requests,
+`AbortIO()`, two-minute stability, and continued progress of two competing
+worker tasks. Use `screendump /tmp/aros.ppm` in the QEMU monitor to capture the
+framebuffer console.
