@@ -4,22 +4,28 @@ TARGETDIR := $(GENDIR)/$(CURDIR)
 BOOTOBJ   := $(TARGETDIR)/entry.o $(TARGETDIR)/boot.o
 BOOTELF   := $(AROSDIR)/aros-emu68-m68k.elf
 BOOTMAP   := $(GENDIR)/boot/aros-emu68-m68k.elf.map
+COREOBJS  := $(KOBJSDIR)/kernel_resource.o $(KOBJSDIR)/exec_library.o
+CORELIBS  := -L$(AROS_LIB) -larossupport -lautoinit -llibinit -lstdc.static -lgcc
 
 USER_CPPFLAGS := -D__EMU68__
 USER_CFLAGS   := $(CFLAGS_NO_BUILTIN) -fno-common
 
+#MM- kernel-link-emu68-m68k : kernel-kernel-kobj kernel-exec-kobj
+#MM- kernel-link-emu68-m68k-quick : kernel-kernel-kobj-quick kernel-exec-kobj-quick
 #MM kernel-link-emu68-m68k: $(BOOTELF)
 #MM kernel-link-emu68-m68k-quick: $(BOOTELF)
 kernel-link-emu68-m68k: $(BOOTELF)
 kernel-link-emu68-m68k-quick: $(BOOTELF)
 
-$(BOOTELF): $(BOOTOBJ) $(SRCDIR)/$(CURDIR)/emu68.ld
+$(BOOTELF): $(BOOTOBJ) $(COREOBJS) $(SRCDIR)/$(CURDIR)/emu68.ld
 	@$(MKDIR) $(AROSDIR) $(GENDIR)/boot
 	@$(ECHO) "Linking $@"
 	$(Q)$(KERNEL_CC) -nostdlib -nostartfiles -static \
 		-Wl,-r -Wl,-Map=$(BOOTMAP) \
+		-Wl,--defsym,SysBase=0x4 \
+		-Wl,--defsym,AbsExecBase=0x4 \
 		-Wl,-T,$(SRCDIR)/$(CURDIR)/emu68.ld \
-		-o $@ $(BOOTOBJ)
+		-o $@ $(BOOTOBJ) $(COREOBJS) $(CORELIBS)
 	$(Q)$(TARGET_STRIP) $(TARGET_STRIP_FLAGS) $@
 
 $(TARGETDIR)/%.o: %.S
