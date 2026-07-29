@@ -85,5 +85,7 @@ void emu68_console_init(void *framebuffer, uint32_t pitch,
                         uint32_t width, uint32_t height);
 int emu68_console_putc(int chr);
 void emu68_console_puts(const char *text);
+void emu68_set_stage(uint32_t stage);
+int emu68_scheduler_selftest_start(void);
 
 #endif

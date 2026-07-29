@@ -2,7 +2,8 @@ include $(SRCDIR)/config/aros.cfg
 
 TARGETDIR := $(GENDIR)/$(CURDIR)
 BOOTOBJ   := $(TARGETDIR)/entry.o $(TARGETDIR)/usermode.o $(TARGETDIR)/boot.o \
-             $(TARGETDIR)/console.o $(TARGETDIR)/font8x14.o
+             $(TARGETDIR)/console.o $(TARGETDIR)/selftest.o \
+             $(TARGETDIR)/font8x14.o
 BOOTELF   := $(AROSDIR)/aros-emu68-m68k.elf
 BOOTMAP   := $(GENDIR)/boot/aros-emu68-m68k.elf.map
 COREOBJS  := $(KOBJSDIR)/kernel_resource.o $(KOBJSDIR)/exec_library.o \
