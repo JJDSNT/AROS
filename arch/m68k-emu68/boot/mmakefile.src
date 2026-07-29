@@ -9,15 +9,17 @@ BOOTMAP   := $(GENDIR)/boot/aros-emu68-m68k.elf.map
 COREOBJS  := $(KOBJSDIR)/kernel_resource.o $(KOBJSDIR)/exec_library.o \
              $(KOBJSDIR)/timer_device.o $(KOBJSDIR)/utility_library.o \
              $(KOBJSDIR)/oop_library.o $(KOBJSDIR)/hiddclass_hidd.o \
-             $(KOBJSDIR)/bootloader_resource.o $(KOBJSDIR)/gfx_hidd.o
-CORELIBS  := -L$(AROS_LIB) -larossupport -lautoinit -llibinit -lstdc.static -lgcc
+             $(KOBJSDIR)/bootloader_resource.o $(KOBJSDIR)/gfx_hidd.o \
+             $(KOBJSDIR)/graphics_library.o
+CORELIBS  := -L$(AROS_LIB) -larossupport -lautoinit -llibinit -lamiga \
+             -lstdc.static -lgcc
 
 USER_CPPFLAGS := -D__EMU68__
 USER_CFLAGS   := $(CFLAGS_NO_BUILTIN) -fno-common
 USER_INCLUDES := -I$(SRCDIR)/rom/kernel -I$(SRCDIR)/rom/exec
 
-#MM- kernel-link-emu68-m68k : kernel-kernel-kobj kernel-exec-kobj kernel-timer-kobj kernel-utility-kobj kernel-oop-kobj kernel-hidd-kobj kernel-bootloader-kobj kernel-hidd-gfx-kobj
-#MM- kernel-link-emu68-m68k-quick : kernel-kernel-kobj-quick kernel-exec-kobj-quick kernel-timer-kobj-quick kernel-utility-kobj-quick kernel-oop-kobj-quick kernel-hidd-kobj-quick kernel-bootloader-kobj-quick kernel-hidd-gfx-kobj-quick
+#MM- kernel-link-emu68-m68k : kernel-kernel-kobj kernel-exec-kobj kernel-timer-kobj kernel-utility-kobj kernel-oop-kobj kernel-hidd-kobj kernel-bootloader-kobj kernel-hidd-gfx-kobj kernel-graphics-kobj
+#MM- kernel-link-emu68-m68k-quick : kernel-kernel-kobj-quick kernel-exec-kobj-quick kernel-timer-kobj-quick kernel-utility-kobj-quick kernel-oop-kobj-quick kernel-hidd-kobj-quick kernel-bootloader-kobj-quick kernel-hidd-gfx-kobj-quick kernel-graphics-kobj-quick
 #MM kernel-link-emu68-m68k: $(BOOTELF)
 #MM kernel-link-emu68-m68k-quick: $(BOOTELF)
 kernel-link-emu68-m68k: $(BOOTELF)

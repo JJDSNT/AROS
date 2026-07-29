@@ -48,6 +48,7 @@ extern void emu68_enter_user(void (*entry)(void), void *stack)
     __attribute__((noreturn));
 extern BOOL emu68_vtimer_start(ULONG base, ULONG irq_level,
                                ULONG interval_us);
+extern void m68k_ExecInstallPreserveAll(struct ExecBase *SysBase);
 
 static struct TagItem emu68_boot_tags[9];
 
@@ -99,6 +100,13 @@ static void coldstart_user(void)
     else
         emu68_console_puts(
             "[AROS/Emu68] pre-graphics resident initialization failed\n");
+
+    if (FindName(&SysBase->LibList, "graphics.library"))
+        emu68_console_puts(
+            "[AROS/Emu68] graphics.library initialized without display driver\n");
+    else
+        emu68_console_puts(
+            "[AROS/Emu68] graphics.library initialization failed\n");
 
     emu68_set_stage(EMU68_STAGE_MULTITASKING);
     emu68_console_puts("[AROS/Emu68] Exec multitasking enabled\n");
@@ -448,6 +456,7 @@ static void start_aros(struct Emu68BootContext *ctx)
     sys_base = krnPrepareExecBase(ranges, memory, BootMsg);
     if (sys_base)
     {
+        m68k_ExecInstallPreserveAll(sys_base);
         ctx->exec_base = sys_base;
         ctx->flags |= EMU68_BOOT_EXEC_READY;
         emu68_set_stage(EMU68_STAGE_EXEC_READY);
