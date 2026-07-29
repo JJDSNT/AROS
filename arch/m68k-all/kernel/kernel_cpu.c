@@ -60,7 +60,9 @@ APTR m68k_DispatchFrame(void)
 
         if (SysBase->IDNestCnt >= 0) {
             SysBase->IDNestCnt = -1;
+#ifndef __EMU68__
             asm volatile ("move.w #0xc000,0xdff09a\n");
+#endif
         }
         asm volatile ("stop #0x2000\n");
     }
@@ -75,10 +77,12 @@ APTR m68k_DispatchFrame(void)
         AROS_UFC1NR(void, AMMXRestoreContext,
             AROS_UFCA(struct AMMXContext *, &ctx->ammx, A0));
 
+#ifndef __EMU68__
     if (SysBase->IDNestCnt < 0)
         asm volatile ("move.w #0xc000,0xdff09a\n");
     else
         asm volatile ("move.w #0x4000,0xdff09a\n");
+#endif
 
     frame = task->tc_SPReg;
     if (task->tc_Flags & TF_EXCEPT) {

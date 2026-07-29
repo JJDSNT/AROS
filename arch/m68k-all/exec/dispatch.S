@@ -45,6 +45,7 @@ __Dispatch_this:
         move.l  %d0,%a5
 
 2:
+#ifndef __EMU68__
         tst.b   IDNestCnt(%a6)
         bmi.s   3f
         move.w  #0x4000,0xdff09a
@@ -52,6 +53,7 @@ __Dispatch_this:
 3:
         move.w  #0xc000,0xdff09a
 4:
+#endif
         lea.l   %a5@(66),%a2
         move.l  %a2,%usp
         move.l  %a5@+,%sp@-

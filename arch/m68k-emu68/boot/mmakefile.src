@@ -1,7 +1,7 @@
 include $(SRCDIR)/config/aros.cfg
 
 TARGETDIR := $(GENDIR)/$(CURDIR)
-BOOTOBJ   := $(TARGETDIR)/entry.o $(TARGETDIR)/boot.o \
+BOOTOBJ   := $(TARGETDIR)/entry.o $(TARGETDIR)/usermode.o $(TARGETDIR)/boot.o \
              $(TARGETDIR)/console.o $(TARGETDIR)/font8x14.o
 BOOTELF   := $(AROSDIR)/aros-emu68-m68k.elf
 BOOTMAP   := $(GENDIR)/boot/aros-emu68-m68k.elf.map

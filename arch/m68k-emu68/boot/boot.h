@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define EMU68_BOOT_MAGIC   0x45363842UL /* "E68B" */
-#define EMU68_BOOT_ABI     4
+#define EMU68_BOOT_ABI     5
 
 #define EMU68_BOOT_FDT_VALID       (1UL << 0)
 #define EMU68_BOOT_MEMORY_VALID    (1UL << 1)
@@ -14,6 +14,7 @@
 #define EMU68_BOOT_KERNEL_READY    (1UL << 5)
 #define EMU68_BOOT_COLDSTART_READY (1UL << 6)
 #define EMU68_BOOT_SCHEDULER_ENTER (1UL << 7)
+#define EMU68_BOOT_TASK_RUNNING    (1UL << 8)
 
 #define EMU68_STAGE_ENTRY          0x45303031UL /* "E001" */
 #define EMU68_STAGE_EXEC_READY     0x45303032UL /* "E002" */
@@ -22,7 +23,8 @@
 #define EMU68_STAGE_COLDSTART      0x45303035UL /* "E005" */
 #define EMU68_STAGE_MULTITASKING   0x45303036UL /* "E006" */
 #define EMU68_STAGE_SCHEDULER      0x45303037UL /* "E007" */
-#define EMU68_STAGE_SCHED_RETURN   0x45303038UL /* "E008" */
+#define EMU68_STAGE_TASK_RUNNING   0x45303038UL /* "E008" */
+#define EMU68_STAGE_SCHED_RETURN   0x45303039UL /* "E009" */
 
 struct Emu68BootContext
 {

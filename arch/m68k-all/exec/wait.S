@@ -20,7 +20,9 @@ AROS_SLIB_ENTRY(Wait,Exec,53):
          * Keep the immediate-signal case cheap.  The original nesting value
          * remains in D3 across a context switch.
          */
+#ifndef __EMU68__
         move.w  #0x4000,0xdff09a
+#endif
         move.b  %d3,%d1
         addq.b  #1,%d1
         move.b  %d1,IDNestCnt(%a6)
@@ -32,10 +34,12 @@ AROS_SLIB_ENTRY(Wait,Exec,53):
 
         /* Reopen interrupts before the trap and context save. */
         move.b  %d3,IDNestCnt(%a6)
+#ifndef __EMU68__
         tst.b   %d3
         bpl.s   2f
         move.w  #0xc000,0xdff09a
 2:
+#endif
 
         lea.l   m68k_VoluntarySwitch,%a5
         jsr     Supervisor(%a6)
@@ -49,10 +53,12 @@ AROS_SLIB_ENTRY(Wait,Exec,53):
 
         /* Restore the caller's interrupt nesting state. */
         move.b  %d3,IDNestCnt(%a6)
+#ifndef __EMU68__
         tst.b   %d3
         bpl.s   4f
         move.w  #0xc000,0xdff09a
 4:
+#endif
         movem.l %sp@+,%d2-%d3/%a2-%a3/%a5
         rts
         .endfunc

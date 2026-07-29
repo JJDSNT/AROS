@@ -51,7 +51,9 @@ m68k_VoluntarySwitch:
          * enabled.  Only the signal recheck and scheduler-list commit below
          * form the critical section.
          */
+#ifndef __EMU68__
         move.w  #0x4000,0xdff09a
+#endif
         move.l  ThisTask(%a6),%a0
         move.b  %d3,%d1
         addq.b  #1,%d1
@@ -76,7 +78,9 @@ m68k_VoluntarySwitch:
         move.l  %a5,tc_SPReg(%a0)
         move.b  %d1,tc_IDNestCnt(%a0)
         move.b  #-1,IDNestCnt(%a6)
+#ifndef __EMU68__
         move.w  #0xc000,0xdff09a
+#endif
         jmp     __Dispatch_this
 
 1:

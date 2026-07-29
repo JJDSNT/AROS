@@ -27,7 +27,9 @@ AROS_SLIB_ENTRY(Signal,Exec,54):
         and.l   tc_SigWait(%a1),%d1
 
         /* Protect signal fields and the scheduler lists. */
+#ifndef __EMU68__
         move.w  #0x4000,0xdff09a
+#endif
         addq.b  #1,IDNestCnt(%a6)
         cmp.l   tc_SigRecvd(%a1),%a0
         bne     .slow
@@ -79,7 +81,9 @@ AROS_SLIB_ENTRY(Signal,Exec,54):
         ble.s   .done
         bset.b  #7,AttnResched+1(%a6)
         bne.s   .done
+#ifndef __EMU68__
         move.w  #0x8004,0xdff09c
+#endif
         bra.s   .done
 
 .signal_only:
@@ -87,17 +91,21 @@ AROS_SLIB_ENTRY(Signal,Exec,54):
 
 .done:
         subq.b  #1,IDNestCnt(%a6)
+#ifndef __EMU68__
         bpl.s   .return
         move.w  #0xc000,0xdff09a
+#endif
 .return:
         rts
 
 .slow:
         /* Undo our Disable() nesting before entering the original C path. */
         subq.b  #1,IDNestCnt(%a6)
+#ifndef __EMU68__
         bpl.s   1f
         move.w  #0xc000,0xdff09a
 1:
+#endif
 .slow_unlocked:
         move.l  %a6,%sp@-
         move.l  %d0,%sp@-

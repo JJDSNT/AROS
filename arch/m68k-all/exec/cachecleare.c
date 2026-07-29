@@ -30,10 +30,12 @@ AROS_LH3(void, CacheClearE,
 
 #ifdef __EMU68__
     /*
-     * Emu68 owns the physical caches and its JIT. Newly-created library
-     * vectors have not been translated yet, so early boot needs no m68k
-     * Supervisor/CPUSH operation.
+     * Emu68 recognizes the 68040 CINVA IC opcode and uses it to invalidate
+     * translated m68k code. There is no physical m68k data cache to manage,
+     * so invalidate the complete translated instruction cache even when the
+     * caller supplied a smaller range.
      */
+    __asm__ volatile(".word 0xf498" ::: "memory");
     return;
 #endif
 

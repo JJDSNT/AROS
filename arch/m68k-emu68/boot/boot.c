@@ -43,6 +43,9 @@ struct Emu68BootContext emu68_boot_context;
 extern struct TagItem *BootMsg;
 extern char __aros_resident_start[];
 extern char __aros_resident_end[];
+extern void Exec_Supervisor_Trap(void);
+extern void emu68_enter_user(void (*entry)(void), void *stack)
+    __attribute__((noreturn));
 
 static struct TagItem emu68_boot_tags[9];
 
@@ -56,6 +59,43 @@ static void set_stage(struct Emu68BootContext *ctx, uint32_t stage)
      * diagnose boot progress before a console is available.
      */
     *(volatile uint32_t *)0x400 = stage;
+}
+
+static void scheduler_probe(void)
+{
+    emu68_boot_context.flags |= EMU68_BOOT_TASK_RUNNING;
+    set_stage(&emu68_boot_context, EMU68_STAGE_TASK_RUNNING);
+    emu68_console_puts("[AROS/Emu68] scheduled task is running\n");
+
+    for (;;)
+        ;
+}
+
+static void coldstart_user(void)
+{
+    struct Emu68BootContext *ctx = &emu68_boot_context;
+
+    set_stage(ctx, EMU68_STAGE_COLDSTART);
+    emu68_console_puts("[AROS/Emu68] InitCode COLDSTART in user mode\n");
+    InitCode(RTF_COLDSTART, 0);
+    ctx->flags |= EMU68_BOOT_COLDSTART_READY;
+    set_stage(ctx, EMU68_STAGE_MULTITASKING);
+    emu68_console_puts("[AROS/Emu68] Exec multitasking enabled\n");
+
+    if (!NewCreateTask(TASKTAG_NAME, "Emu68 scheduler probe",
+                       TASKTAG_PRI, 125,
+                       TASKTAG_PC, scheduler_probe,
+                       TAG_DONE))
+        emu68_console_puts("[AROS/Emu68] failed to create scheduler probe\n");
+
+    ctx->flags |= EMU68_BOOT_SCHEDULER_ENTER;
+    set_stage(ctx, EMU68_STAGE_SCHEDULER);
+    Reschedule();
+    set_stage(ctx, EMU68_STAGE_SCHED_RETURN);
+    emu68_console_puts("[AROS/Emu68] scheduler returned to bootstrap\n");
+
+    for (;;)
+        ;
 }
 
 static uint32_t align4(uint32_t value)
@@ -275,6 +315,7 @@ static void start_aros(struct Emu68BootContext *ctx)
     UWORD *ranges[3];
     struct MemHeader *memory;
     struct ExecBase *sys_base;
+    void *user_stack;
     uint32_t lower;
     uint32_t upper;
     uint32_t tag_index = 0;
@@ -336,18 +377,12 @@ static void start_aros(struct Emu68BootContext *ctx)
         set_stage(ctx, EMU68_STAGE_KERNEL_READY);
         emu68_console_puts("[AROS/Emu68] kernel.resource ready\n");
 
-        set_stage(ctx, EMU68_STAGE_COLDSTART);
-        emu68_console_puts("[AROS/Emu68] InitCode COLDSTART\n");
-        InitCode(RTF_COLDSTART, 0);
-        ctx->flags |= EMU68_BOOT_COLDSTART_READY;
-        set_stage(ctx, EMU68_STAGE_MULTITASKING);
-        emu68_console_puts("[AROS/Emu68] Exec multitasking enabled\n");
+        ((volatile void **)0)[8] = Exec_Supervisor_Trap;
+        user_stack = AllocMem(64 * 1024, MEMF_PUBLIC | MEMF_CLEAR);
+        if (user_stack)
+            emu68_enter_user(coldstart_user, user_stack + 64 * 1024);
 
-        ctx->flags |= EMU68_BOOT_SCHEDULER_ENTER;
-        set_stage(ctx, EMU68_STAGE_SCHEDULER);
-        Reschedule();
-        set_stage(ctx, EMU68_STAGE_SCHED_RETURN);
-        emu68_console_puts("[AROS/Emu68] scheduler returned to bootstrap\n");
+        emu68_console_puts("[AROS/Emu68] failed to allocate user stack\n");
     }
 }
 

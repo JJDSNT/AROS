@@ -27,9 +27,10 @@ AROS_LH0(void, CacheClearU,
 
 #ifdef __EMU68__
     /*
-     * See CacheClearE(). Runtime JIT invalidation for SetFunction() will be
-     * added with the Emu68 service-vector integration.
+     * CINVA IC is the Emu68-visible synchronization point for self-modifying
+     * m68k code, including Exec library vectors changed by SetFunction().
      */
+    __asm__ volatile(".word 0xf498" ::: "memory");
     return;
 #endif
 
