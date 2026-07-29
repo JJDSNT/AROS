@@ -335,6 +335,19 @@ static void start_aros(struct Emu68BootContext *ctx)
         ctx->flags |= EMU68_BOOT_KERNEL_READY;
         set_stage(ctx, EMU68_STAGE_KERNEL_READY);
         emu68_console_puts("[AROS/Emu68] kernel.resource ready\n");
+
+        set_stage(ctx, EMU68_STAGE_COLDSTART);
+        emu68_console_puts("[AROS/Emu68] InitCode COLDSTART\n");
+        InitCode(RTF_COLDSTART, 0);
+        ctx->flags |= EMU68_BOOT_COLDSTART_READY;
+        set_stage(ctx, EMU68_STAGE_MULTITASKING);
+        emu68_console_puts("[AROS/Emu68] Exec multitasking enabled\n");
+
+        ctx->flags |= EMU68_BOOT_SCHEDULER_ENTER;
+        set_stage(ctx, EMU68_STAGE_SCHEDULER);
+        Reschedule();
+        set_stage(ctx, EMU68_STAGE_SCHED_RETURN);
+        emu68_console_puts("[AROS/Emu68] scheduler returned to bootstrap\n");
     }
 }
 

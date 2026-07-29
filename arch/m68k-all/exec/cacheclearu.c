@@ -25,6 +25,14 @@ AROS_LH0(void, CacheClearU,
     AROS_LIBFUNC_INIT
     void (*func)(void);
 
+#ifdef __EMU68__
+    /*
+     * See CacheClearE(). Runtime JIT invalidation for SetFunction() will be
+     * added with the Emu68 service-vector integration.
+     */
+    return;
+#endif
+
     if (SysBase->LibNode.lib_OpenCnt == 0)
         /* We were called from PrepareExecBase. AttnFlags isn't set yet.
          * Do nothing or we would always install 68000 routine.

@@ -28,6 +28,15 @@ AROS_LH3(void, CacheClearE,
 
     void (*func)();
 
+#ifdef __EMU68__
+    /*
+     * Emu68 owns the physical caches and its JIT. Newly-created library
+     * vectors have not been translated yet, so early boot needs no m68k
+     * Supervisor/CPUSH operation.
+     */
+    return;
+#endif
+
     if (SysBase->LibNode.lib_OpenCnt == 0)
         return;
 
@@ -57,4 +66,3 @@ AROS_LH3(void, CacheClearE,
 
     AROS_LIBFUNC_EXIT
 } /* CacheClearE */
-
