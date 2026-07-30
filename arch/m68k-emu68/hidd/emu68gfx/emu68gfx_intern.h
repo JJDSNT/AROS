@@ -2,7 +2,6 @@
 #define EMU68GFX_INTERN_H
 
 #include <exec/libraries.h>
-#include <exec/semaphores.h>
 #include <hidd/gfx.h>
 #include <oop/oop.h>
 
@@ -12,7 +11,6 @@
 
 #define CLID_Hidd_Gfx_Emu68 "hidd.gfx.emu68"
 #define CLID_Hidd_Display_Emu68 "hidd.display.emu68"
-#define CLID_Hidd_BitMap_Emu68 "hidd.bitmap.emu68"
 
 struct Emu68GfxData
 {
@@ -22,28 +20,14 @@ struct Emu68DisplayData
 {
 };
 
-struct Emu68BitMapData
-{
-    OOP_Object *display;
-    OOP_Object *pixfmt;
-    UBYTE *buffer;
-    ULONG bytes_per_row;
-    ULONG width;
-    ULONG height;
-    BOOL visible;
-};
-
 struct Emu68GfxStaticData
 {
     OOP_Class *basebm;
     OOP_Class *gfxclass;
     OOP_Class *displayclass;
-    OOP_Class *bmclass;
     OOP_Object *gfx;
     OOP_Object *display;
     OOP_Object *dmenum;
-    OOP_Object *visible;
-    struct SignalSemaphore framebuffer_lock;
     OOP_AttrBase attrBases[ATTRBASES_NUM];
     UBYTE *framebuffer;
     ULONG pitch;
@@ -58,8 +42,6 @@ struct Emu68GfxBase
 };
 
 #define XSD(cl) (&((struct Emu68GfxBase *)cl->UserData)->vsd)
-#define LOCK_FB(xsd) ObtainSemaphore(&(xsd)->framebuffer_lock)
-#define UNLOCK_FB(xsd) ReleaseSemaphore(&(xsd)->framebuffer_lock)
 
 #undef HiddChunkyBMAttrBase
 #undef HiddBitMapAttrBase
@@ -78,11 +60,5 @@ struct Emu68GfxBase
 #define HiddAttrBase         XSD(cl)->attrBases[5]
 #define HiddDisplayAttrBase  XSD(cl)->attrBases[6]
 #define HiddDMEnumAttrBase   XSD(cl)->attrBases[7]
-
-#define IS_BM_ATTR(attr, idx) \
-    (((idx) = (attr) - HiddBitMapAttrBase) < num_Hidd_BitMap_Attrs)
-
-void emu68gfx_refresh(OOP_Class *cl, OOP_Object *bitmap,
-                      ULONG x, ULONG y, ULONG width, ULONG height);
 
 #endif

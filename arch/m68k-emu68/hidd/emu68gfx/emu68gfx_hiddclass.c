@@ -28,6 +28,13 @@ OOP_Object *Emu68Gfx__Root__New(OOP_Class *cl, OOP_Object *o,
         { aHidd_PixFmt_BitsPerPixel,   16 },
         { aHidd_PixFmt_StdPixFmt, vHidd_StdPixFmt_RGB16_LE },
         { aHidd_PixFmt_BitMapType, vHidd_BitMapType_Chunky },
+        /*
+         * m68k is big-endian; the RGB16_LE framebuffer Emu68 hands us is not.
+         * Without this, int_map_truecolor() skips the byte swap it does for
+         * every other big-endian target's little-endian pixel formats, and
+         * every color comes out with its bytes swapped.
+         */
+        { aHidd_PixFmt_SwapPixelBytes, TRUE },
         { TAG_DONE, 0 }
     };
     struct TagItem sync_tags[] =
@@ -110,6 +117,18 @@ VOID Emu68Gfx__Root__Get(OOP_Class *cl, OOP_Object *o,
         case aoHidd_Gfx_DisplayDefault:
             *msg->storage = (IPTR)XSD(cl)->display;
             return;
+        /*
+         * Tells the generic Display class (gfx_displayclass.c) that this is a
+         * single, always-mapped linear framebuffer. It then creates that one
+         * bitmap itself (see the FrameBuffer tag below), automatically gives
+         * every other displayable bitmap the same class as a "friend" of it,
+         * and its own Show()/display_FBInstall() re-link the classic BitMap's
+         * HIDD object to the framebuffer whenever a screen is shown - which is
+         * the part our own hand-rolled Show() was missing.
+         */
+        case aoHidd_Gfx_FrameBufferType:
+            *msg->storage = vHidd_FrameBuffer_Direct;
+            return;
         }
     }
     OOP_DoSuperMethod(cl, o, (OOP_Msg)msg);
@@ -118,63 +137,49 @@ VOID Emu68Gfx__Root__Get(OOP_Class *cl, OOP_Object *o,
 OOP_Object *Emu68Display__Hidd_Display__CreateObject(
     OOP_Class *cl, OOP_Object *o, struct pHidd_Display_CreateObject *msg)
 {
-    if (msg->cl == XSD(cl)->basebm)
-    {
-        struct TagItem tags[] =
-        {
-            { TAG_IGNORE, 0 },
-            { TAG_MORE, (IPTR)msg->attrList }
-        };
-        struct pHidd_Display_CreateObject create_msg;
-        BOOL displayable =
-            GetTagData(aHidd_BitMap_Displayable, FALSE, msg->attrList);
+    BOOL fb = GetTagData(aHidd_BitMap_FrameBuffer, FALSE, msg->attrList);
+    BOOL displayable = GetTagData(aHidd_BitMap_Displayable, FALSE, msg->attrList);
 
-        if (displayable)
+    if (msg->cl == XSD(cl)->basebm && (fb || displayable))
+    {
+        /*
+         * Always name the class ourselves instead of letting the generic
+         * Display class fall back to "inherit the framebuffer bitmap's
+         * class" for displayable bitmaps: since we have no hardware cursor,
+         * that framebuffer bitmap is wrapped in a CursorFB proxy, and
+         * blindly instantiating THAT class via OOP_NewObject() (skipping
+         * its own create_cursorfb() constructor) leaves it with no real
+         * bitmap to forward to - every attribute Get() on it then hangs.
+         */
+        struct TagItem tags[4];
+        struct pHidd_Display_CreateObject create_msg;
+        int n = 0;
+
+        tags[n].ti_Tag = aHidd_BitMap_ClassID;
+        tags[n].ti_Data = (IPTR)CLID_Hidd_ChunkyBM;
+        n++;
+
+        if (fb)
         {
-            tags[0].ti_Tag = aHidd_BitMap_ClassPtr;
-            tags[0].ti_Data = (IPTR)XSD(cl)->bmclass;
+            /* The one bitmap the Display class creates for itself (see
+             * gfx_displayclass.c) - point it at the real linear framebuffer
+             * Emu68 handed us instead of letting ChunkyBM allocate its own
+             * backing memory. */
+            tags[n].ti_Tag = aHidd_ChunkyBM_Buffer;
+            tags[n].ti_Data = (IPTR)XSD(cl)->framebuffer;
+            n++;
+            tags[n].ti_Tag = aHidd_BitMap_BytesPerRow;
+            tags[n].ti_Data = XSD(cl)->pitch;
+            n++;
         }
-        else
-        {
-            tags[0].ti_Tag = aHidd_BitMap_ClassID;
-            tags[0].ti_Data = (IPTR)CLID_Hidd_ChunkyBM;
-        }
+
+        tags[n].ti_Tag = TAG_MORE;
+        tags[n].ti_Data = (IPTR)msg->attrList;
 
         create_msg.mID = msg->mID;
         create_msg.cl = msg->cl;
         create_msg.attrList = tags;
-        return (OOP_Object *)OOP_DoSuperMethod(
-            cl, o, (OOP_Msg)&create_msg);
+        return (OOP_Object *)OOP_DoSuperMethod(cl, o, (OOP_Msg)&create_msg);
     }
     return (OOP_Object *)OOP_DoSuperMethod(cl, o, (OOP_Msg)msg);
-}
-
-OOP_Object *Emu68Display__Hidd_Display__Show(
-    OOP_Class *cl, OOP_Object *o, struct pHidd_Display_Show *msg)
-{
-    struct TagItem visible[] =
-    {
-        { aHidd_BitMap_Visible, FALSE },
-        { TAG_DONE, 0 }
-    };
-
-    LOCK_FB(XSD(cl));
-    if (XSD(cl)->visible)
-        OOP_SetAttrs(XSD(cl)->visible, visible);
-
-    if (msg->bitMap)
-    {
-        visible[0].ti_Data = TRUE;
-        OOP_SetAttrs(msg->bitMap, visible);
-    }
-    else
-        SetMem(XSD(cl)->framebuffer, 0,
-               XSD(cl)->pitch * XSD(cl)->height);
-    XSD(cl)->visible = msg->bitMap;
-    UNLOCK_FB(XSD(cl));
-
-    if (msg->bitMap)
-        emu68gfx_refresh(cl, msg->bitMap, 0, 0,
-                         XSD(cl)->width, XSD(cl)->height);
-    return msg->bitMap;
 }

@@ -65,7 +65,6 @@ static int Emu68Gfx_Init(LIBBASETYPEPTR LIBBASE)
     xsd->pitch = ctx->framebuffer_pitch;
     xsd->width = ctx->framebuffer_width;
     xsd->height = ctx->framebuffer_height;
-    InitSemaphore(&xsd->framebuffer_lock);
 
     GfxBase = (struct GfxBase *)TaggedOpenLibrary(TAGGEDOPEN_GRAPHICS);
     if (!GfxBase)

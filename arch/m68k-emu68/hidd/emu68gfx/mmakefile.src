@@ -2,7 +2,7 @@ include $(SRCDIR)/config/aros.cfg
 
 #MM kernel-m68k-emu68-emu68gfx-kobj : kernel-hidd-gfx-includes
 
-FILES := emu68gfx_init emu68gfx_hiddclass emu68gfx_bitmapclass
+FILES := emu68gfx_init emu68gfx_hiddclass
 
 USER_INCLUDES := -I$(SRCDIR)/arch/m68k-emu68/boot
 USER_CPPFLAGS := -D__EMU68__
