@@ -73,6 +73,23 @@ static void coldstart_user(void)
 
     emu68_set_stage(EMU68_STAGE_COLDSTART);
     emu68_console_puts("[AROS/Emu68] InitCode COLDSTART in user mode\n");
+
+    /*
+     * COLDSTART may enter dosboot.resource and never return while it waits for
+     * boot media. Start the platform heartbeat before resident
+     * initialization so timer.device and the boot animation can use it.
+     */
+    timer_interval_us = SysBase->VBlankFrequency
+        ? 1000000UL / SysBase->VBlankFrequency
+        : 20000UL;
+    if ((ctx->flags & EMU68_BOOT_TIMER_VALID) &&
+        timer_interval_us &&
+        emu68_vtimer_start(ctx->timer_base, ctx->timer_irq,
+                           timer_interval_us))
+        emu68_console_puts("[AROS/Emu68] virtual timer enabled\n");
+    else
+        emu68_console_puts("[AROS/Emu68] virtual timer not found\n");
+
     InitCode(RTF_COLDSTART, 0);
     ctx->flags |= EMU68_BOOT_COLDSTART_READY;
 
@@ -131,17 +148,6 @@ static void coldstart_user(void)
 
     emu68_set_stage(EMU68_STAGE_MULTITASKING);
     emu68_console_puts("[AROS/Emu68] Exec multitasking enabled\n");
-
-    timer_interval_us = SysBase->VBlankFrequency
-        ? 1000000UL / SysBase->VBlankFrequency
-        : 20000UL;
-    if ((ctx->flags & EMU68_BOOT_TIMER_VALID) &&
-        timer_interval_us &&
-        emu68_vtimer_start(ctx->timer_base, ctx->timer_irq,
-                           timer_interval_us))
-        emu68_console_puts("[AROS/Emu68] virtual timer enabled\n");
-    else
-        emu68_console_puts("[AROS/Emu68] virtual timer not found\n");
 
     if (!emu68_scheduler_selftest_start())
         emu68_console_puts("[AROS/Emu68] failed to start scheduler selftest\n");

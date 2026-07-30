@@ -8,13 +8,19 @@
 #include <kernel_base.h>
 #include <kernel_debug.h>
 
-extern int emu68_console_putc(int chr);
 extern void emu68_console_puts(const char *text);
 
+/*
+ * Emu68 leaves 0x00000000deadbeef deliberately unmapped so a one-byte write
+ * from the guest faults into its own host-side kprintf(), which reaches the
+ * real UART (visible through QEMU's -serial). This gives kprintf()/bug()
+ * scrollback console output independent of the m68k framebuffer console.
+ */
 int krnPutC(int chr, struct KernelBase *KernelBase)
 {
     (void)KernelBase;
-    return emu68_console_putc(chr);
+    *(volatile UBYTE *)0xdeadbeef = (UBYTE)chr;
+    return chr;
 }
 
 /*
