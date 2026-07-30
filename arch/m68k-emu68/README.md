@@ -58,11 +58,48 @@ the m68k ELF by Emu68. Emu68 remains responsible for initializing the physical
 display and passes the address, pitch, width and height in the entry ABI. The
 driver advertises one fixed RGB565 little-endian mode matching that contract.
 
-Displayable AROS bitmaps remain ordinary managed chunky bitmaps. `Show()` marks
-one of them visible, and `UpdateRect()` copies only its changed rectangle to the
-physical framebuffer. This keeps Raspberry Pi mailbox, VideoCore and other
-bare-metal details outside AROS while preserving the normal graphics HIDD and
-`graphics.library` boundary.
+Displayable AROS bitmaps remain ordinary managed chunky bitmaps. The driver
+declares `aHidd_Gfx_FrameBufferType = vHidd_FrameBuffer_Direct` and hands
+`graphics.library` a `CLID_Hidd_ChunkyBM` bitmap bound to the real framebuffer
+memory; the generic `Display`/`BitMap` classes then handle `Show()` and
+`UpdateRect()` themselves, re-linking a screen's classic `BitMap` to that
+framebuffer bitmap whenever it becomes visible. This keeps Raspberry Pi
+mailbox, VideoCore and other bare-metal details outside AROS while preserving
+the normal graphics HIDD and `graphics.library` boundary - and it avoids
+reimplementing bookkeeping the generic code already does correctly.
+
+### Bring-up bugs
+
+Three bugs blocked the boot screen before it rendered correctly:
+
+- **Swapped colors.** The pixel format is declared `RGB16_LE`, but m68k is
+  big-endian while the framebuffer is not. Without
+  `aHidd_PixFmt_SwapPixelBytes`, `graphics.library`'s color-to-pixel
+  conversion skips the byte swap it applies for every other big-endian
+  target's little-endian formats, so every color came out with its bytes
+  swapped (a solid pink/garbled screen).
+
+- **Nothing ever updated past the first screen.** An earlier version of this
+  driver implemented its own `Show()`/`UpdateRect()` instead of declaring
+  `aHidd_Gfx_FrameBufferType`. Without that attribute, `graphics.library`
+  never re-links a screen's classic `BitMap` to the real framebuffer object
+  when a new screen is shown, so drawing landed on an offscreen buffer that
+  was never displayed (solid gray, nothing updating - only the very first
+  screen's initial paint ever reached VRAM).
+
+- **Silent hang creating a second screen's bitmap.** `HIDD_Display_CreateObject`
+  has a generic shortcut: a displayable bitmap with no class of its own
+  inherits the class of the existing framebuffer bitmap. Since this driver
+  has no hardware cursor, that framebuffer bitmap is wrapped by
+  `graphics.library` in a `CursorFB` proxy object. Inheriting *that* class and
+  instantiating it via a plain `OOP_NewObject()` - instead of through its own
+  `create_cursorfb()` constructor - produced a `CursorFB` instance whose
+  "real bitmap" pointer was never set. Any attribute `Get()` on it (starting
+  with `Width`) then hung forwarding to that null reference. The fix is to
+  always name the bitmap class explicitly (`CLID_Hidd_ChunkyBM`) in
+  `CreateObject()` rather than relying on the inherit-from-framebuffer
+  shortcut - the same pattern `vc4gfx` (Raspberry Pi's native framebuffer
+  HIDD) already uses.
 
 Emu68 exposes a unified memory domain rather than separate Amiga chip and fast
 RAM. The system memory header consequently satisfies both `MEMF_CHIP` and
@@ -114,7 +151,7 @@ qemu-system-aarch64 \
   -kernel /path/to/Emu68.raw.img \
   -dtb /path/to/bcm2710-rpi-3-b.dtb \
   -initrd bin/emu68-m68k/AROS/aros-emu68-m68k.elf \
-  -serial none -display none -no-reboot \
+  -serial stdio -display none -no-reboot \
   -monitor unix:/tmp/emu68-monitor.sock,server,nowait
 ```
 
@@ -138,3 +175,22 @@ It additionally confirms coherent elapsed time, simultaneous requests,
 `AbortIO()`, two-minute stability, and continued progress of two competing
 worker tasks. Use `screendump /tmp/aros.ppm` in the QEMU monitor to capture the
 framebuffer console.
+
+## Debug console (0xdeadbeef)
+
+Emu68 leaves the guest physical address `0xdeadbeef` deliberately unmapped
+(`src/aarch64/start.c`). A one-byte guest write there faults into Emu68 itself,
+which forwards the byte to its own host-side `kprintf()`
+(`src/aarch64/vectors.c`), reaching the real UART that QEMU exposes through
+`-serial`. This gives `bug()`/`kprintf()` real scrollback text output,
+independent of framebuffer state, instead of the single-value bootstrap marker
+below.
+
+`krnPutC()` (`arch/m68k-emu68/kernel/kernel_debug.c`) and the framebuffer
+console's `emu68_console_putc()` (`arch/m68k-emu68/boot/console.c`) both write
+through this channel now, so existing boot-progress messages show up on serial
+as-is.
+
+TODO: now that this channel exists, revisit whether the `emu68_set_stage()`
+single-marker mechanism below is still needed, or whether boot-stage tracking
+should move entirely to text messages over this channel.
