@@ -295,12 +295,11 @@ Working:
 - Interrupt controller. `GPUIRQ_ENBL0` bit 3 is unmasked and, once the
   compare latches, `GPUIRQ_PEND0` bit 3 reads pending.
 
-Not working - one missing step, identified:
+Interrupt delivery: **proven, but not yet shippable** - it works against
+stock firmware, at the cost of one hardcoded address. The mechanism and the
+remaining problem are below.
 
-AROS never enters its level-6 handler. The physical IRQ **does** reach Emu68;
-only the last hop into the m68k core is missing.
-
-#### What is actually missing
+#### What was missing
 
 Emu68's core-0 IRQ fast path (`vectors.c:148`-`171`) does two things on every
 physical IRQ: it sets its internal `ARMPending` flag **unconditionally**, and
@@ -316,9 +315,10 @@ running shows exactly that state:
              INTENA  INTREQ  ARMPending
 ```
 
-`ARMPending = 1` proves the whole hardware path works: the compare matched,
-the interrupt controller routed to core 0, ARM IRQs are unmasked, and the
-fast path ran. It skipped the `INTF.ARM` store because `INTENA` is zero.
+That was the state before arming: `ARMPending = 1` proves the whole hardware
+path works - the compare matched, the interrupt controller routed to core 0,
+ARM IRQs are unmasked, and the fast path ran. It skipped the `INTF.ARM` store
+only because `INTENA` was zero.
 
 So the single missing step is arming that shadow. Nothing else is broken.
 
@@ -337,11 +337,11 @@ back means the write landed in ordinary RAM. `platform.c`'s current
 arm/acknowledge pair is therefore inert and has never been exercised - it
 implements the PiStorm protocol on a build that does not have it.
 
-#### Current research direction
+#### Working approach - proven end to end
 
 `INT_shadow` is an ordinary Emu68 global, and the guest sees physical RAM
 1:1 - the same flat map that made `0xdff000` plain RAM works in our favour
-here. The guest can write the shadow directly. The shape:
+here. Arming it directly delivers interrupts on stock firmware:
 
 | Step | Mechanism |
 |---|---|
@@ -349,27 +349,57 @@ here. The guest can write the shadow directly. The shape:
 | Deliver | fast path sets `INTF.ARM = 6` -> loop raises level 6 -> vector at `VBR + 0x78` |
 | Acknowledge | `MOVEC` to `JITCTRL2` with `JC2F_INT_FROM_ARM` (bit 29, `M68k.h:207`) - clears `INTF.ARM`, and is *not* PiStorm-gated |
 
-Two known traps, both already paid for elsewhere in this port:
+Measured under QEMU against an unpatched upstream Emu68:
 
-- `INT_shadow.INTENA` is a little-endian `uint16_t`. A big-endian m68k word
-  write must store `0x0060` for the ARM side to read `0x6000`.
-- `INTF.ARM` is **not** cleared when the exception is taken
-  (`ExecutionLoop.c:387`-`436` pushes the frame and loads PC without touching
-  `INTF`), so it is level-sensitive and the acknowledge is mandatory on every
-  entry.
+```text
+[exter] shadow        0x00006000    arming accepted
+[exter] LEVEL6 entry  0x00000001    m68k took level 6
+[systimer] IRQ tick   0x00000001    AROS handler ran
+[exter] LEVEL6 entry  0x00000002
+[systimer] IRQ tick   0x00000002
+[exter] LEVEL6 entry  0x00000003
+[systimer] IRQ tick   0x00000003
+```
 
-**The open problem is locating the shadow, not reaching it.** Emu68's base is
-derivable - it relocates itself to just past the top of guest RAM, which the
-guest reads from the FDT (`/memory` ends at `0x347fffff`, Emu68 moves to
-`0x34800000`, confirmed by its own boot log). The offset of `INT_shadow`
-within the image is not: `0x4620b0` is a link-time address that changes with
-every Emu68 build, and the `/emu68` FDT node publishes only `variant`,
-`vc4-mem` and `unicam-mem` - nothing that helps.
+Ticks 2 and 3 are what prove the acknowledge: without clearing `INTF.ARM`
+the level-6 line stays asserted and the run either storms or stops after
+one entry.
 
-A hardcoded offset would fail silently on a firmware update: no error, the
-timer just stops ticking. Finding a robust way to locate the shadow is the
-next piece of work, and the current blocker on treating this approach as
-viable.
+Two things this settles that earlier revisions of this document got wrong:
+
+- **No byte swap on Emu68's own structures.** Emu68 is built
+  `elf64-bigaarch64` - the ARM runs big-endian, sharing the guest's byte
+  order. Swapping is needed only for the genuinely little-endian BCM
+  peripherals. Writing a byte-swapped `0x0060` into the shadow leaves the
+  gate closed, which is a silent failure.
+- **The `SPSR` IRQ masking in the fast path is not a blocker.** Repeated
+  delivery works in practice; do not design around it.
+
+Still true and load-bearing: `INTF.ARM` is **not** cleared when the exception
+is taken (`ExecutionLoop.c:387`-`436` pushes the frame and loads PC without
+touching `INTF`), so it is level-sensitive and the acknowledge is mandatory
+on every entry.
+
+#### Open problem: locating the shadow
+
+The mechanism is proven; the address is not yet obtainable at runtime.
+`platform.c` currently hardcodes it, which is valid for exactly one firmware
+build.
+
+The address is `Emu68 relocation base + link offset of INT_shadow`:
+
+| Term | Value here | Derivable? |
+|---|---|---|
+| Relocation base | `0x34800000` | **Yes** - Emu68 moves itself to just past the top of guest RAM, and the guest reads that range from the FDT (`/memory` ends at `0x347fffff`) |
+| `INT_shadow` link offset | `0x4620b0` | **No** - a link-time address that moves with every Emu68 build |
+
+So exactly one unknown: **the offset of `INT_shadow` within the Emu68
+image.** The `/emu68` FDT node publishes only `variant`, `vc4-mem` and
+`unicam-mem` - nothing that helps.
+
+A hardcoded offset fails silently on a firmware update: no error, the timer
+just stops ticking. Finding a robust way to locate it is the next piece of
+work and the blocker on treating this as shippable rather than proven.
 
 Real Raspberry Pi 3 hardware validation remains outstanding.
 

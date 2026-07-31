@@ -46,18 +46,56 @@
  * These are ordinary Amiga custom-chip writes; Emu68 traps them and they
  * never reach real silicon.
  */
-#define EMU68_INTENA ((volatile UWORD *)0xdff09a)
-#define EMU68_INTREQ ((volatile UWORD *)0xdff09c)
+/*
+ * EXPERIMENT - see the README's "Current research direction".
+ *
+ * On a standalone (non-PiStorm) Emu68 the 0xdff09a alias is plain RAM, so
+ * arming through it does nothing. Emu68's shadow is an ordinary global in
+ * its own image, and the guest sees physical RAM 1:1, so we can arm it
+ * directly.
+ *
+ * The address is hardcoded and therefore only valid for one firmware build:
+ * Emu68 relocates itself to just past the top of guest RAM (0x34800000 for
+ * 840 MiB) and `INT_shadow` sits at link offset 0x4620b0. Locating this
+ * robustly is the open problem; this constant exists to prove the mechanism
+ * end to end, nothing more.
+ */
+#define EMU68_INT_SHADOW_INTENA ((volatile UWORD *)0x34c620b0)
 
 static inline void emu68_exter_enable(void)
 {
-    *EMU68_INTENA = INTF_SETCLR | INTF_INTEN | INTF_EXTER;
+    /*
+     * Emu68's fast path tests (INT_shadow.INTENA & 0x6000) == 0x6000.
+     *
+     * No byte swap here: Emu68 is built big-endian (elf64-bigaarch64), so
+     * its own structures share the guest's byte order. Swapping is only
+     * needed for the little-endian BCM peripherals -- see the drivers under
+     * bcm283x/.
+     */
+    *EMU68_INT_SHADOW_INTENA = INTF_INTEN | INTF_EXTER;
 }
+
+/*
+ * Acknowledge via Emu68's JITCTRL2 control register (MOVEC 0x1e0): writing
+ * it with JC2F_INT_FROM_ARM (bit 29) clears INTF.ARM. Unlike the INTREQ
+ * alias this is not PiStorm-gated. Bits 29-31 are action bits that are not
+ * stored, so the low bits are read back and preserved rather than zeroed.
+ */
+#define JC2F_INT_FROM_ARM 0x20000000UL
+#define JC2_CONFIG_MASK   0x1fffffffUL
 
 static inline void emu68_exter_ack(void)
 {
-    /* SET/CLR bit clear == clear the named bits. */
-    *EMU68_INTREQ = INTF_EXTER;
+    /* An Emu68-private control register has no MOVEC mnemonic, so both
+     * directions are encoded by hand. The encoding names d0 explicitly, so
+     * the value has to be pinned there rather than left to the allocator. */
+    register ULONG jc2 __asm__("d0");
+
+    __asm__ volatile (".word 0x4e7a, 0x01e0" : "=d" (jc2)); /* JITCTRL2 -> d0 */
+
+    jc2 = (jc2 & JC2_CONFIG_MASK) | JC2F_INT_FROM_ARM;
+
+    __asm__ volatile (".word 0x4e7b, 0x01e0" :: "d" (jc2)); /* d0 -> JITCTRL2 */
 }
 
 extern const struct PlatformDriver bcm283x_system_timer_driver;
@@ -253,6 +291,15 @@ static BOOL discover(void)
  */
 BOOL Platform_Autovector(void)
 {
+    /* Bounded: did level 6 ever reach us at all, independently of whether
+     * dispatch then finds and runs a handler? */
+    static ULONG entries = 0;
+    if (entries < 3)
+    {
+        entries++;
+        platform_trace_val("[exter] LEVEL6 entry ", entries);
+    }
+
     if (g_intc_ops)
         g_intc_ops->Dispatch(KernelBase);
 
@@ -287,24 +334,27 @@ BOOL platform_timer_start(const void *fdt, ULONG interval_us)
     if (!dt_parse(fdt))
         return FALSE;
 
+    /*
+     * Arm before discover(): the timer driver's Init() registers its handler,
+     * which unmasks the source at the controller. Emu68's fast path masks ARM
+     * IRQs on return and nothing re-enables them, so if an IRQ lands while the
+     * shadow is still clear that is the only one we ever get -- it records
+     * ARMPending, skips INTF.ARM, and leaves the CPU deaf.
+     */
+    /* If this already reads 1, an IRQ was taken before AROS ever ran and the
+     * CPU is already masked -- arming now cannot help. */
+    platform_trace_val("[exter] ARMPend@entry",
+                       *(volatile UBYTE *)0x34c620b4);
+
+    emu68_exter_enable();
+
     if (!discover())
         return FALSE;
 
     vectors[24 + PLATFORM_AUTOVECTOR_LEVEL] = Platform_Autovector_Direct;
 
-    /* Arm the bridge only once the vector is in place: from here on a
-     * physical IRQ can raise level 6. */
-    emu68_exter_enable();
-
-    /* Read the arming back through Emu68's INTENAR alias: it answers from
-     * the same shadow the IRQ fast path consults, so a plausible value here
-     * proves the write was actually trapped and not swallowed by RAM. */
-    platform_trace_val("[exter] INTENAR    ",
-                       *(volatile UWORD *)0xdff01c);
-    /* If this reads back the value we just wrote, 0xdff09a is ordinary RAM
-     * in this guest's map and Emu68 never trapped the access. */
-    platform_trace_val("[exter] INTENA rdbk",
-                       *(volatile UWORD *)0xdff09a);
+    platform_trace_val("[exter] shadow     ",
+                       *EMU68_INT_SHADOW_INTENA);
     platform_trace_val("[exter] vector@0x78",
                        *(volatile ULONG *)0x78);
 
