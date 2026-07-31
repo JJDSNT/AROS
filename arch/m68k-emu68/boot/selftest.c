@@ -9,7 +9,15 @@
 #include <proto/exec.h>
 #include <utility/tagitem.h>
 
-extern volatile ULONG emu68_vtimer_ticks;
+extern volatile ULONG emu68_platform_ticks;
+
+/*
+ * Rough upper bound on how long to spin waiting for one platform-timer
+ * interrupt. Deliberately generous: at a VBlank-derived interval a tick is
+ * tens of milliseconds away, and this only needs to be large enough not to
+ * misfire while still keeping a broken timer from hanging the boot.
+ */
+#define EMU68_TICK_SPIN_LIMIT 100000000UL
 
 static volatile ULONG worker_counter_a;
 static volatile ULONG worker_counter_b;
@@ -230,6 +238,50 @@ static BOOL timer_device_soak_probe(void)
     return passed && emu68_boot_context.timer_soak_seconds == 120;
 }
 
+/*
+ * Wait for three consecutive platform-timer interrupts, reporting each one
+ * and giving up instead of spinning forever if delivery stalls.
+ *
+ * Where this stops localises a bring-up failure precisely:
+ *
+ *  - No tick at all: level 6 never reached AROS. Either the EXTER channel
+ *    was never armed (Emu68 raises level 6 only when its INTENA shadow has
+ *    both INTEN and EXTER -- see platform/platform.c), the interrupt
+ *    controller never unmasked the source, or the System Timer's compare
+ *    never matched.
+ *
+ *  - Tick 1 and then a stall: delivery works but is not being released.
+ *    The level-6 handler has to acknowledge Emu68's ARM -> m68k bridge by
+ *    clearing EXTER in INTREQ, not just the peripheral that fired.
+ */
+static void platform_timer_probe(void)
+{
+    static const char *const tick_message[3] = {
+        "[AROS/Emu68] platform timer: tick 1\n",
+        "[AROS/Emu68] platform timer: tick 2\n",
+        "[AROS/Emu68] platform timer: tick 3\n",
+    };
+    ULONG seen;
+
+    for (seen = 0; seen < 3; seen++)
+    {
+        ULONG spins = 0;
+
+        while (emu68_platform_ticks <= seen && spins < EMU68_TICK_SPIN_LIMIT)
+            spins++;
+
+        if (emu68_platform_ticks <= seen)
+        {
+            emu68_console_puts(seen == 0
+                ? "[AROS/Emu68] platform timer: no interrupt delivered\n"
+                : "[AROS/Emu68] platform timer: interrupt delivery stalled\n");
+            return;
+        }
+
+        emu68_console_puts(tick_message[seen]);
+    }
+}
+
 static void scheduler_probe(void)
 {
     ULONG timer_result;
@@ -238,8 +290,7 @@ static void scheduler_probe(void)
     emu68_boot_context.flags |= EMU68_BOOT_TASK_RUNNING;
     emu68_set_stage(EMU68_STAGE_TASK_RUNNING);
     emu68_console_puts("[AROS/Emu68] scheduled task is running\n");
-    while (emu68_vtimer_ticks < 3)
-        ;
+    platform_timer_probe();
 
     emu68_set_stage(EMU68_STAGE_TIMER_RUNNING);
     timer_result = timer_device_probe();

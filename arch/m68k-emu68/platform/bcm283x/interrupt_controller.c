@@ -19,6 +19,7 @@
 #include "../platform.h"
 
 #include <aros/kernel.h>
+#include <aros/macros.h>
 #include <exec/types.h>
 
 #include <kernel_base.h>
@@ -45,9 +46,21 @@
 
 static ULONG intc_base;
 
-static inline volatile ULONG *intc_reg(ULONG offset)
+/*
+ * BCM283x registers are little-endian and the m68k guest is big-endian;
+ * Emu68 maps the peripheral block through unswapped, so every 32-bit
+ * access has to convert explicitly. See the equivalent note in
+ * system_timer.c -- a raw write here lands byte-reversed, which turns
+ * "unmask IRQ 3" into "unmask IRQ 27".
+ */
+static inline ULONG intc_read(ULONG offset)
 {
-    return (volatile ULONG *)(intc_base + offset);
+    return AROS_LE2LONG(*(volatile ULONG *)(intc_base + offset));
+}
+
+static inline void intc_write(ULONG offset, ULONG value)
+{
+    *(volatile ULONG *)(intc_base + offset) = AROS_LONG2LE(value);
 }
 
 static BOOL intc_init(const struct PlatformNode *node)
@@ -55,43 +68,43 @@ static BOOL intc_init(const struct PlatformNode *node)
     intc_base = node->base;
 
     /* Make sure no source is stolen by the FIQ path. */
-    *intc_reg(ARMFIQ_CTRL) = 0;
+    intc_write(ARMFIQ_CTRL, 0);
 
     /* Start fully masked; individual drivers unmask their own IRQ as they
      * call KrnAddIRQHandler() (see ictl_enable_irq() in platform.c). */
-    *intc_reg(GPUIRQ_DIBL0) = ~0UL;
-    *intc_reg(GPUIRQ_DIBL1) = ~0UL;
-    *intc_reg(ARMIRQ_DIBL) = ~0UL;
+    intc_write(GPUIRQ_DIBL0, ~0UL);
+    intc_write(GPUIRQ_DIBL1, ~0UL);
+    intc_write(ARMIRQ_DIBL, ~0UL);
 
     return TRUE;
 }
 
-static volatile ULONG *bank_enable_reg(ULONG bank)
+static ULONG bank_enable_offset(ULONG bank)
 {
     if (bank == 0)
-        return intc_reg(GPUIRQ_ENBL0);
+        return GPUIRQ_ENBL0;
     if (bank == 1)
-        return intc_reg(GPUIRQ_ENBL1);
-    return intc_reg(ARMIRQ_ENBL);
+        return GPUIRQ_ENBL1;
+    return ARMIRQ_ENBL;
 }
 
-static volatile ULONG *bank_disable_reg(ULONG bank)
+static ULONG bank_disable_offset(ULONG bank)
 {
     if (bank == 0)
-        return intc_reg(GPUIRQ_DIBL0);
+        return GPUIRQ_DIBL0;
     if (bank == 1)
-        return intc_reg(GPUIRQ_DIBL1);
-    return intc_reg(ARMIRQ_DIBL);
+        return GPUIRQ_DIBL1;
+    return ARMIRQ_DIBL;
 }
 
 static void intc_enable(ULONG irq)
 {
-    *bank_enable_reg(IRQ_BANK(irq)) = IRQ_MASK(irq);
+    intc_write(bank_enable_offset(IRQ_BANK(irq)), IRQ_MASK(irq));
 }
 
 static void intc_disable(ULONG irq)
 {
-    *bank_disable_reg(IRQ_BANK(irq)) = IRQ_MASK(irq);
+    intc_write(bank_disable_offset(IRQ_BANK(irq)), IRQ_MASK(irq));
 }
 
 static void scan_bank(struct KernelBase *KernelBase, ULONG pending, ULONG base)
@@ -111,9 +124,9 @@ static void intc_dispatch(struct KernelBase *KernelBase)
 
     for (;;)
     {
-        pending_arm = *intc_reg(ARMIRQ_PEND) & ~ARMIRQ_BANK_MIRROR;
-        pending0 = *intc_reg(GPUIRQ_PEND0);
-        pending1 = *intc_reg(GPUIRQ_PEND1);
+        pending_arm = intc_read(ARMIRQ_PEND) & ~ARMIRQ_BANK_MIRROR;
+        pending0 = intc_read(GPUIRQ_PEND0);
+        pending1 = intc_read(GPUIRQ_PEND1);
 
         if (!(pending_arm || pending0 || pending1))
             break;

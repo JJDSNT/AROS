@@ -8,6 +8,7 @@
 #include <aros/kernel.h>
 #include <aros/macros.h>
 #include <exec/types.h>
+#include <hardware/intbits.h>
 
 #include "cpu_m68k.h"
 #include <kernel_base.h>
@@ -18,6 +19,46 @@
 #include "exec_platform.h"
 
 #define PLATFORM_AUTOVECTOR_LEVEL 6
+
+/*
+ * Emu68's ARM -> m68k interrupt bridge.
+ *
+ * A real physical IRQ that none of Emu68's own virtual devices claims is
+ * handed to the guest over the Amiga EXTER channel rather than over a
+ * vector of its own. Emu68's core-0 IRQ fast path (Emu68
+ * src/aarch64/vectors.c, "curr_el_spx_irq") drives that channel off the
+ * INTENA/INTREQ shadow it maintains for us, and the protocol has two halves
+ * the guest must honour:
+ *
+ *  - The fast path always records its internal ARMPending flag, but only
+ *    raises the m68k level-6 line when the shadow has *both* INTEN and
+ *    EXTER set. The channel therefore has to be armed once at startup, or
+ *    the physical IRQ arrives and is silently dropped.
+ *
+ *  - It clears ARMPending (and drops the level-6 line) only on a guest
+ *    write to INTREQ with the SET/CLR bit clear and EXTER set. Every
+ *    level-6 entry must therefore acknowledge the bridge *in addition* to
+ *    whatever the peripheral that fired needs, exactly the way
+ *    arch/m68k-amiga/kernel/amiga_irq.c's PAULA_IRQ_ACK does after running
+ *    a server chain. Acknowledging only the peripheral leaves the level-6
+ *    line asserted.
+ *
+ * These are ordinary Amiga custom-chip writes; Emu68 traps them and they
+ * never reach real silicon.
+ */
+#define EMU68_INTENA ((volatile UWORD *)0xdff09a)
+#define EMU68_INTREQ ((volatile UWORD *)0xdff09c)
+
+static inline void emu68_exter_enable(void)
+{
+    *EMU68_INTENA = INTF_SETCLR | INTF_INTEN | INTF_EXTER;
+}
+
+static inline void emu68_exter_ack(void)
+{
+    /* SET/CLR bit clear == clear the named bits. */
+    *EMU68_INTREQ = INTF_EXTER;
+}
 
 extern const struct PlatformDriver bcm283x_system_timer_driver;
 extern const struct PlatformDriver bcm283x_armctrl_ic_driver;
@@ -214,6 +255,13 @@ BOOL Platform_Autovector(void)
 {
     if (g_intc_ops)
         g_intc_ops->Dispatch(KernelBase);
+
+    /* Acknowledge the bridge only once Dispatch() has drained every source
+     * it can see -- the same ordering arch/m68k-amiga uses for a server
+     * chain. Emu68 keeps the host IRQ masked for the whole of this handler,
+     * so nothing can set ARMPending again behind us and be lost here. */
+    emu68_exter_ack();
+
     return TRUE;
 }
 
@@ -243,6 +291,22 @@ BOOL platform_timer_start(const void *fdt, ULONG interval_us)
         return FALSE;
 
     vectors[24 + PLATFORM_AUTOVECTOR_LEVEL] = Platform_Autovector_Direct;
+
+    /* Arm the bridge only once the vector is in place: from here on a
+     * physical IRQ can raise level 6. */
+    emu68_exter_enable();
+
+    /* Read the arming back through Emu68's INTENAR alias: it answers from
+     * the same shadow the IRQ fast path consults, so a plausible value here
+     * proves the write was actually trapped and not swallowed by RAM. */
+    platform_trace_val("[exter] INTENAR    ",
+                       *(volatile UWORD *)0xdff01c);
+    /* If this reads back the value we just wrote, 0xdff09a is ordinary RAM
+     * in this guest's map and Emu68 never trapped the access. */
+    platform_trace_val("[exter] INTENA rdbk",
+                       *(volatile UWORD *)0xdff09a);
+    platform_trace_val("[exter] vector@0x78",
+                       *(volatile ULONG *)0x78);
 
     g_timer_ops->SetPeriod(interval_us);
     g_timer_ops->Start();

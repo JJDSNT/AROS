@@ -110,8 +110,14 @@ requirement by removing `MEMF_CHIP` in their platform allocator.
 
 ## Real platform timer and interrupt controller (`platform/`)
 
-There is no synthetic timer device on either side of this port. Emu68 hands
-AROS the real Raspberry Pi FDT (patched only so that `/soc`'s `ranges` point
+This port drives **physical peripherals through a virtual interrupt-delivery
+bridge**. The registers are real BCM283x silicon, discovered from the real
+board FDT and programmed directly over MMIO; there is no synthetic timer
+device on either side. Interrupt *delivery*, however, is not native: the ARM
+exception still belongs to Emu68, which translates any physical IRQ into the
+m68k EXTER channel. Both halves are described below.
+
+Emu68 hands AROS the real Raspberry Pi FDT (patched only so that `/soc`'s `ranges` point
 at the guest-accessible virtual window Emu68 already mapped for its own
 peripheral access, in `src/raspi/start_rpi64.c:map_peripheral_ranges()` -
 this remap already carries `MMU_ALLOW_EL0`, so the guest gets the same real
@@ -123,12 +129,53 @@ and `platform/bcm283x/interrupt_controller.c`
 (`compatible = "brcm,bcm2836-armctrl-ic"`) - translating each match's `reg`
 through `/soc`'s `ranges` to get a real, guest-writable MMIO address. This is
 the same shape `arch/aarch64-native/kernel/platform_bcm2708.c` uses to drive
-the identical silicon on bare ARM hardware; the only structural difference is
-that dispatch arrives over the m68k level-6 autovector (Emu68's fixed
-"EXTER" channel, which every real physical IRQ not claimed by one of Emu68's
-own virtual devices already uses unconditionally) instead of an ARM64 vector
-table entry, so the right driver has to be found and armed at runtime rather
-than being link-time fixed.
+the identical silicon on bare ARM hardware. Two things differ structurally,
+and neither is cosmetic.
+
+### Byte order
+
+BCM283x registers are little-endian. On `aarch64-native` the CPU is too, so a
+plain dereference works. Here the guest is **big-endian m68k** and Emu68 maps
+the peripheral block straight through without swapping, so every 32-bit MMIO
+access has to convert explicitly (`AROS_LE2LONG`/`AROS_LONG2LE`).
+
+This is worth stating plainly because the failure mode is deceptive: reads
+*and* writes are reversed, so a write followed by a read-back agrees with
+itself. A driver that programs `SYSTIMER_C3` and reads the same value back can
+still be handing the hardware a completely different number - which is exactly
+what happened here, and why the compare never matched.
+
+### Interrupt delivery
+
+Dispatch arrives over the m68k level-6 autovector - Emu68's fixed "EXTER"
+channel for any real physical IRQ - rather than an ARM64 vector table entry,
+so the right driver has to be found and armed at runtime instead of being
+link-time fixed. That much is a straightforward remap.
+
+The part that is not: Emu68's core-0 IRQ fast path
+(`src/aarch64/vectors.c`, `curr_el_spx_irq`) drives that channel off an
+INTENA/INTREQ shadow it maintains for the guest, and the guest has to speak
+that protocol:
+
+- The fast path always records its internal `ARMPending` flag, but only
+  raises the m68k level-6 line when the shadow has **both** `INTEN` and
+  `EXTER` set. The channel must be armed once at startup, or a physical IRQ
+  arrives and is silently dropped.
+- It clears `ARMPending` (and drops level 6) only on a guest write to
+  `INTREQ` with the SET/CLR bit clear and `EXTER` set. Every level-6 entry
+  must acknowledge **the bridge** in addition to the peripheral that fired -
+  the same thing `arch/m68k-amiga/kernel/amiga_irq.c`'s `PAULA_IRQ_ACK` does
+  after running a server chain.
+
+So this is not "the same path as `aarch64-native` entered through a different
+vector". There is an extra layer with its own state and its own acknowledge
+contract. `platform.c` implements both halves.
+
+This is also the contract Emu68's own guest-side drivers rely on:
+`gic400.library` (Pi 4 GIC-400 support, used by `genet.device`) installs
+itself with `AddIntServer(INTB_EXTER, ...)` and never touches the custom-chip
+registers at all - it depends on the OS owning level 6 and doing the
+acknowledge.
 
 `platform.c` installs one shared level-6 trampoline that hands off to
 whichever interrupt controller driver was discovered; that driver decodes
@@ -146,7 +193,7 @@ knowledge. Its period is derived from `SysBase->VBlankFrequency`.
 
 The bootstrap probe validates both synchronous `TR_GETSYSTIME` and an
 asynchronous 40 ms `TR_ADDREQUEST`. During the latter, the probe task blocks,
-the scheduler returns to the bootstrap task, and the virtual timer wakes the
+the scheduler returns to the bootstrap task, and the platform timer wakes the
 probe through the normal Exec device path. A second `TR_GETSYSTIME` also checks
 that at least the requested 40 ms elapsed on the device clock.
 
@@ -167,8 +214,25 @@ task lists, timer request queues, preemption, and equal-priority round-robin.
 ## QEMU validation
 
 Emu68 itself remains the bare-metal owner. QEMU emulates the Raspberry Pi that
-runs Emu68; it does not load the m68k ELF directly. With an Emu68 raw image and
-Raspberry Pi 3 DTB available, run:
+runs Emu68; it does not load the m68k ELF directly.
+
+Build the firmware from an unmodified upstream checkout - this port targets
+stock Emu68, so validating against a patched one proves nothing:
+
+```sh
+git clone https://github.com/michalsc/Emu68.git
+cd Emu68 && git submodule update --init --recursive
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=toolchains/aarch64-linux-gnu.cmake \
+      -DTARGET=raspi64
+cmake --build build -j$(nproc)
+gunzip -c build/Emu68.img.gz > build/Emu68.raw.img
+```
+
+The build also downloads Raspberry Pi DTBs into `build/firmware/`, so
+`bcm2710-rpi-3-b.dtb` comes from the same tree. (The toolchain file pins
+GCC 14; with GCC 13 installed, copy it and adjust the two compiler lines.)
+
+Then run:
 
 ```sh
 qemu-system-aarch64 \
@@ -186,38 +250,92 @@ Connect to the monitor with:
 nc -U /tmp/emu68-monitor.sock
 ```
 
-The command below reads the four-byte bootstrap marker kept immediately above
-the m68k vector table:
+Read memory as **bytes** (`xp /4bx`), not words. The word view renders the
+byte order in a way that is easy to misread on a little-endian peripheral,
+which is exactly how the byte-order bug above stayed hidden for a while.
+
+Useful probes:
 
 ```text
-xp /4bx 0x400
+xp /4bx 0x400        bootstrap stage marker (ASCII, e.g. "E005")
+xp /4bx 0x3F003000   SYSTIMER CS    (compare-match status)
+xp /4bx 0x3F003004   SYSTIMER CLO   (free-running microsecond counter)
+xp /4bx 0x3F003018   SYSTIMER C3    (compare target)
+xp /4bx 0x3F00B210   GPUIRQ_ENBL0   (bit 3 == System Timer channel 3)
+xp /4bx 0x3F00B204   GPUIRQ_PEND0
 ```
 
-Before the virtual timer was removed, this exact QEMU setup validated the
-full soak to `45 30 31 38` (`E018`): Exec initialized, scheduled a user task,
-received timer interrupts (then via Emu68's synthetic device, backed by the
-ARM CPU's own architectural timer and delivered through the ARM-local
-`BCM2836_TIMER_INT_CTRL0`/CNT-IRQ path), advanced `timer.device`, blocked on
-`TR_ADDREQUEST`, woke the task again, and held up for two minutes of
-simultaneous requests, `AbortIO()`, and equal-priority round-robin. That
-confirms this QEMU configuration is not, in general, too slow or unreliable
-for interrupt-driven timing.
+Note these are **host physical** addresses. The guest sees the same registers
+through Emu68's peripheral window at `0xf2000000` (so `systimer_base` reads
+`0xf2003000` inside AROS). Symbols from the m68k ELF cannot be poked this way
+- the kernel is relocated at load, so `nm` addresses are link-time only.
 
-**Current status with the real platform timer**: FDT discovery, `/soc`
-address translation and IRQ registration all run and log correctly (the
-`brcm,bcm2835-system-timer`/`brcm,bcm2836-armctrl-ic` nodes resolve to the
-same real, guest-accessible addresses Emu68's own host-side code uses).
-But under `qemu-system-aarch64 -M raspi3b`, the System Timer's compare-match
-status bit never sets, even though `SYSTIMER_CLO` visibly free-runs past the
-programmed `SYSTIMER_C3` target. Given the architectural-timer/CNT-IRQ path
-above is proven reliable on this exact QEMU machine, this looks like a gap
-specific to QEMU's emulation of the legacy BCM2835 system timer's
-compare-match/IRQ-generation logic (a peripheral path modern Linux mostly
-doesn't exercise anymore, unlike the ARM generic timer) rather than a bug in
-this driver or in Emu68's FDT/MMIO exposure - but it has not been confirmed
-against real Raspberry Pi 3 hardware yet, which is required before treating
-that as settled. Use `screendump /tmp/aros.ppm` in the QEMU monitor to
-capture the framebuffer console.
+Use `screendump /tmp/aros.ppm` in the monitor to capture the framebuffer
+console.
+
+### Current status
+
+Validated against a clean upstream Emu68 (`michalsc/Emu68`, no local
+patches), built for `raspi64`.
+
+Working:
+
+- FDT discovery and `/soc` address translation - both nodes resolve to the
+  real guest-accessible window.
+- System Timer programming. With the byte-order fix, `CLO` reads as a sane
+  microsecond counter (advancing ~2.7 ms between adjacent traces instead of
+  jumping by billions), `C3` is programmed to `CLO + interval`, and the
+  compare **matches**.
+- Interrupt controller. `GPUIRQ_ENBL0` bit 3 is unmasked and, once the
+  compare latches, `GPUIRQ_PEND0` bit 3 reads pending.
+
+Not working - **open, under investigation**:
+
+The interrupt is never delivered to AROS. Everything upstream of Emu68's
+bridge works; the bridge itself is unreachable in this configuration.
+
+The arming write (`INTENA <- SET|INTEN|EXTER`) lands in RAM instead of being
+trapped by Emu68:
+
+```text
+[exter] INTENAR     0x00000000   Emu68's shadow: never written
+[exter] INTENA rdbk 0x0000e000   0xdff09a reads back what we wrote
+[intc]  PEND0 (raw) 0x08000000   byte-reversed 0x08 -> IRQ 3 is pending
+[exter] INTREQR     0x00000000   Emu68 never set ARMPending
+```
+
+Writing `0xE000` to `0xdff09a` and reading `0xE000` back proves that address
+is **ordinary RAM in this guest's memory map**. Emu68 never faults on the
+access, so `INT_shadow.INTENA` stays zero, so the fast path never sets
+`INTF.ARM`, so level 6 is never raised.
+
+This follows from where Emu68 came from: an Amiga guest never has RAM at
+`0xdff000` (chip RAM tops out at 2 MB), so the custom-chip range is naturally
+unmapped and faults into the emulator. AROS here gets a flat RAM block that
+swallows it.
+
+Open question, and the reason this is not yet fixed: it is not established
+whether the guest memory map is decided by Emu68 or by what AROS claims. If
+AROS can simply avoid claiming that page, this is a small change. If Emu68
+maps the region unconditionally, reaching the EXTER bridge would require a
+firmware change - which conflicts with this port's goal of running on
+unmodified Emu68, and would mean the interrupt path needs a different
+approach entirely. That question has to be answered before choosing a fix.
+
+Consequently the level-6 arm/acknowledge code in `platform.c` is correct in
+form but inert in this configuration, and has not been exercised. Real
+Raspberry Pi 3 hardware validation is still outstanding.
+
+### Superseded diagnosis
+
+An earlier revision of this document attributed the dead timer to a gap in
+QEMU's emulation of the legacy BCM2835 system timer, on the grounds that the
+compare-match status bit never set while `CLO` visibly ran past the target.
+That was wrong, and is recorded here so the reasoning is not repeated: the
+driver was writing byte-reversed values, so the target the hardware actually
+held was ~512 seconds in the future while `CLO` was still in the hundreds of
+milliseconds. QEMU emulates this peripheral correctly. The same bug would
+have failed identically on real hardware.
 
 ## Debug console (0xdeadbeef)
 

@@ -70,6 +70,57 @@ struct PlatformDriver
     const struct PlatformIntcOps  *intc_ops;  /* NULL for a timer driver */
 };
 
+/*
+ * Bring-up tracing.
+ *
+ * Writes a byte at a time to Emu68's 0xdeadbeef host debug channel, the
+ * same one arch/m68k-emu68/boot/console.c uses. Kept self-contained here so
+ * the platform layer can trace during early boot without depending on
+ * anything from boot/ having been linked or initialised yet.
+ *
+ * Left enabled while interrupt delivery is still unresolved -- see the
+ * "Interrupt delivery" section of this directory's README. Set to 0 to
+ * silence it; the call sites stay in place.
+ */
+#define PLATFORM_TRACE_BRINGUP 1
+
+#if PLATFORM_TRACE_BRINGUP
+
+static inline void platform_trace(const char *text)
+{
+    while (*text)
+        *(volatile UBYTE *)0xdeadbeef = (UBYTE)*text++;
+}
+
+static inline void platform_trace_hex(ULONG value)
+{
+    static const char digits[] = "0123456789abcdef";
+    int shift;
+
+    platform_trace("0x");
+    for (shift = 28; shift >= 0; shift -= 4)
+        *(volatile UBYTE *)0xdeadbeef = (UBYTE)digits[(value >> shift) & 0xf];
+}
+
+static inline void platform_trace_val(const char *label, ULONG value)
+{
+    platform_trace(label);
+    platform_trace_hex(value);
+    platform_trace("\n");
+}
+
+#else
+
+static inline void platform_trace(const char *text) { (void)text; }
+static inline void platform_trace_hex(ULONG value) { (void)value; }
+static inline void platform_trace_val(const char *label, ULONG value)
+{
+    (void)label;
+    (void)value;
+}
+
+#endif /* PLATFORM_TRACE_BRINGUP */
+
 /* Discover the real platform timer and interrupt controller under /soc in
  * `fdt`, wire the level-6 autovector, and start the timer ticking at
  * `interval_us`. Returns FALSE if either device is missing/unrecognised. */
