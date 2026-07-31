@@ -147,11 +147,11 @@ what happened here, and why the compare never matched.
 
 ### Interrupt delivery
 
-> **This path does not work on a standalone Emu68 build.** The protocol
-> below is real, but the code implementing it is compiled out unless Emu68
-> is built as a PiStorm variant. See "Interrupt delivery is PiStorm-only"
-> under Current status. The description is kept because it is what the port
-> targets and what `platform.c` implements.
+> **The `INTENA`/`INTREQ` half of this is PiStorm-only.** Level-6 delivery
+> itself works on any build, but the custom-chip registers used to arm and
+> acknowledge it are emulated only on PiStorm variants, so `platform.c`'s
+> current implementation is inert here. See "What is actually missing" under
+> Current status for the state of play and the direction being pursued.
 
 Dispatch arrives over the m68k level-6 autovector - Emu68's "EXTER" channel
 for a real physical IRQ - rather than an ARM64 vector table entry, so the
@@ -295,62 +295,83 @@ Working:
 - Interrupt controller. `GPUIRQ_ENBL0` bit 3 is unmasked and, once the
   compare latches, `GPUIRQ_PEND0` bit 3 reads pending.
 
-Not working - **blocked, cause identified**:
+Not working - one missing step, identified:
 
-The interrupt is never delivered to AROS. Everything upstream of Emu68's
-bridge works; the bridge itself does not exist in this build.
+AROS never enters its level-6 handler. The physical IRQ **does** reach Emu68;
+only the last hop into the m68k core is missing.
+
+#### What is actually missing
+
+Emu68's core-0 IRQ fast path (`vectors.c:148`-`171`) does two things on every
+physical IRQ: it sets its internal `ARMPending` flag **unconditionally**, and
+it sets `INTF.ARM = 6` - which is what makes the execution loop raise m68k
+level 6 - **only** when `(INT_shadow.INTENA & 0x6000) == 0x6000`, i.e. when
+the shadow has both `INTEN` and `EXTER`.
+
+Reading Emu68's own `INT_shadow` out of physical memory while the timer is
+running shows exactly that state:
 
 ```text
-[exter] INTENAR     0x00000000   Emu68's shadow: never written
-[exter] INTENA rdbk 0x0000e000   0xdff09a reads back what we wrote
-[intc]  PEND0 (raw) 0x08000000   byte-reversed 0x08 -> IRQ 3 is pending
-[exter] INTREQR     0x00000000   Emu68 never set ARMPending
+0x34c620b0:  00 00   00 00   01
+             INTENA  INTREQ  ARMPending
 ```
 
-#### Interrupt delivery is PiStorm-only
+`ARMPending = 1` proves the whole hardware path works: the compare matched,
+the interrupt controller routed to core 0, ARM IRQs are unmasked, and the
+fast path ran. It skipped the `INTF.ARM` store because `INTENA` is zero.
 
-Writing `0xE000` to `0xdff09a` and reading it back proves that address is
-ordinary RAM here - Emu68 never faults on the access. But the memory map is
-not the blocker, and changing it would not help. The chain, verified against
-upstream `michalsc/Emu68`:
+So the single missing step is arming that shadow. Nothing else is broken.
+
+#### Why `0xdff09a` is the wrong way to arm it
+
+The custom-chip register alias only exists on PiStorm builds:
 
 | Fact | Location |
 |---|---|
-| All `INTENA`/`INTREQ`/`INT_shadow` handling sits inside `#ifdef PISTORM_ANY_MODEL` | `vectors.c:314`-`723` |
+| All `INTENA`/`INTREQ` MMIO emulation sits inside `#ifdef PISTORM_ANY_MODEL` | `vectors.c:314`-`723` |
 | A standalone build is `VARIANT=none`, so that macro is undefined | `CMakeLists.txt:245` |
 | The non-PiStorm `SYSWriteValToAddr` special-cases only `0xdeadbeef`; everything else writes through to a linear alias | `vectors.c:726` |
-| Core 0 is served entirely by the assembly IRQ fast path | `vectors.c:148`-`171` |
-| That fast path raises level 6 only when `(INT_shadow.INTENA & 0x6000) == 0x6000` | same |
-| `IRQHandler` (C), whose `cpu_id == 0` branch would set `INTF.ARM` *without* that gate, is reached only from `IRQonOtherCores` - cores 1-3 | `vectors.c:170`, `271` |
 
-`INT_shadow` is a zero-initialised global that nothing writes on a
-standalone build, so the gate never opens: **a physical IRQ cannot raise m68k
-level 6 on stock non-PiStorm Emu68.** This is not misconfiguration - Emu68
-assumes a real Amiga supplies `INTENA`/`INTREQ` across the PiStorm bus.
+Hence the trace above: writing `0xE000` to `0xdff09a` and reading `0xE000`
+back means the write landed in ordinary RAM. `platform.c`'s current
+arm/acknowledge pair is therefore inert and has never been exercised - it
+implements the PiStorm protocol on a build that does not have it.
 
-Consequently the level-6 arm/acknowledge code in `platform.c` is correct in
-form but inert, and has never been exercised. It also explains, in
-retrospect, why this port originally carried an Emu68-side virtual timer
-device: on standalone Emu68 that was the only way to get an interrupt into
-the guest at all.
+#### Current research direction
 
-Who decides the guest memory map, for the record: Emu68 does. It maps the
-FDT `/memory` blocks 1:1 up to `0xf2000000` (`start.c:1362`) and punches
-exactly one deliberate hole, for the `0xdeadbeef` debug channel
-(`start.c:1373`). AROS receives the resulting RAM range via FDT and has no
-say in it.
+`INT_shadow` is an ordinary Emu68 global, and the guest sees physical RAM
+1:1 - the same flat map that made `0xdff000` plain RAM works in our favour
+here. The guest can write the shadow directly. The shape:
 
-#### Options
-
-| Option | Assessment |
+| Step | Mechanism |
 |---|---|
-| Upstream Emu68 patch - seed `INT_shadow.INTENA` at init on non-PiStorm builds, or let core 0 reach `M68kReportInterrupt(1)` | Small, fixes a genuine gap (no standalone guest can receive a physical IRQ today), upstreamable. Moves "stock Emu68" to a future release rather than abandoning it |
-| Revive the Emu68-side virtual device | Known to work, but reintroduces a firmware fork |
-| Poll instead of interrupt | No preemption; degrades the scheduler |
-| Build a PiStorm variant | Expects real Amiga hardware on the bus; not viable on a plain Pi |
+| Arm | write `0x6000` into `INT_shadow.INTENA` |
+| Deliver | fast path sets `INTF.ARM = 6` -> loop raises level 6 -> vector at `VBR + 0x78` |
+| Acknowledge | `MOVEC` to `JITCTRL2` with `JC2F_INT_FROM_ARM` (bit 29, `M68k.h:207`) - clears `INTF.ARM`, and is *not* PiStorm-gated |
 
-Real Raspberry Pi 3 hardware validation remains outstanding, but is not
-expected to differ: the blocker is a build-time conditional, not timing.
+Two known traps, both already paid for elsewhere in this port:
+
+- `INT_shadow.INTENA` is a little-endian `uint16_t`. A big-endian m68k word
+  write must store `0x0060` for the ARM side to read `0x6000`.
+- `INTF.ARM` is **not** cleared when the exception is taken
+  (`ExecutionLoop.c:387`-`436` pushes the frame and loads PC without touching
+  `INTF`), so it is level-sensitive and the acknowledge is mandatory on every
+  entry.
+
+**The open problem is locating the shadow, not reaching it.** Emu68's base is
+derivable - it relocates itself to just past the top of guest RAM, which the
+guest reads from the FDT (`/memory` ends at `0x347fffff`, Emu68 moves to
+`0x34800000`, confirmed by its own boot log). The offset of `INT_shadow`
+within the image is not: `0x4620b0` is a link-time address that changes with
+every Emu68 build, and the `/emu68` FDT node publishes only `variant`,
+`vc4-mem` and `unicam-mem` - nothing that helps.
+
+A hardcoded offset would fail silently on a firmware update: no error, the
+timer just stops ticking. Finding a robust way to locate the shadow is the
+next piece of work, and the current blocker on treating this approach as
+viable.
+
+Real Raspberry Pi 3 hardware validation remains outstanding.
 
 ### Superseded diagnosis
 
