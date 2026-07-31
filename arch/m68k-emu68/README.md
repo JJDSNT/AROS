@@ -295,9 +295,9 @@ Working:
 - Interrupt controller. `GPUIRQ_ENBL0` bit 3 is unmasked and, once the
   compare latches, `GPUIRQ_PEND0` bit 3 reads pending.
 
-Interrupt delivery: **proven, but not yet shippable** - it works against
-stock firmware, at the cost of one hardcoded address. The mechanism and the
-remaining problem are below.
+Interrupt delivery: **working, as a proof of concept** - it runs against
+stock firmware with the address discovered at runtime. The mechanism and its
+one deliberate hack are below.
 
 #### What was missing
 
@@ -380,26 +380,43 @@ is taken (`ExecutionLoop.c:387`-`436` pushes the frame and loads PC without
 touching `INTF`), so it is level-sensitive and the acknowledge is mandatory
 on every entry.
 
-#### Open problem: locating the shadow
+#### Locating the shadow (`emu68_bridge.c`) - proof of concept
 
-The mechanism is proven; the address is not yet obtainable at runtime.
-`platform.c` currently hardcodes it, which is valid for exactly one firmware
-build.
+The address is `Emu68 relocation base + link offset of INT_shadow`. The base
+is derivable - Emu68 moves itself to just past the top of guest RAM, which
+the guest reads from the FDT. The offset is not: it is a link-time address
+that moves with every Emu68 build.
 
-The address is `Emu68 relocation base + link offset of INT_shadow`:
+Rather than guess it, `platform/emu68_bridge.c` reads it out of the
+instruction stream that uses it. The fast path loads the shadow with an
+`adrp`/`add` pair, so scanning for the three instructions after it and
+decoding the two before gives exactly the address Emu68 itself uses:
 
-| Term | Value here | Derivable? |
-|---|---|---|
-| Relocation base | `0x34800000` | **Yes** - Emu68 moves itself to just past the top of guest RAM, and the guest reads that range from the FDT (`/memory` ends at `0x347fffff`) |
-| `INT_shadow` link offset | `0x4620b0` | **No** - a link-time address that moves with every Emu68 build |
+```text
+adrp x1, <page>         d00015e1
+add  x1, x1, #<lo12>    9102c021
+ldrh w0, [x1]           79400020   <- anchor
+and  w0, w0, #0x6000    12130400
+cmp  w0, #0x6, lsl #12  7140181f
+```
 
-So exactly one unknown: **the offset of `INT_shadow` within the Emu68
-image.** The `/emu68` FDT node publishes only `variant`, `vc4-mem` and
-`unicam-mem` - nothing that helps.
+`adrp` is PC-relative and the guest-physical view differs from Emu68's
+virtual one by a page-aligned constant, so the arithmetic works in physical
+space without needing Emu68's virtual base. The pattern occurs twice - the
+IRQ and FIQ handlers - and both must decode to the same address or the scan
+gives up.
 
-A hardcoded offset fails silently on a firmware update: no error, the timer
-just stops ticking. Finding a robust way to locate it is the next piece of
-work and the blocker on treating this as shippable rather than proven.
+Confirmed at runtime: discovery returns `0x34c620b0`, the same address that
+was hardcoded while the mechanism was being proven.
+
+**This is a proof of concept and is deliberately the only thing in the port
+that knows about Emu68's internals.** It is one file, and nothing outside it
+depends on how the address is obtained - replacing it with something better
+touches nothing else. If upstream rewrites that instruction sequence the
+scan finds nothing and returns 0, and the port runs without interrupts:
+a diagnosable failure rather than a write into a running firmware image.
+
+Real Raspberry Pi 3 hardware validation remains outstanding.
 
 Real Raspberry Pi 3 hardware validation remains outstanding.
 

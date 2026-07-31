@@ -47,23 +47,18 @@
  * never reach real silicon.
  */
 /*
- * EXPERIMENT - see the README's "Current research direction".
- *
  * On a standalone (non-PiStorm) Emu68 the 0xdff09a alias is plain RAM, so
  * arming through it does nothing. Emu68's shadow is an ordinary global in
- * its own image, and the guest sees physical RAM 1:1, so we can arm it
- * directly.
- *
- * The address is hardcoded and therefore only valid for one firmware build:
- * Emu68 relocates itself to just past the top of guest RAM (0x34800000 for
- * 840 MiB) and `INT_shadow` sits at link offset 0x4620b0. Locating this
- * robustly is the open problem; this constant exists to prove the mechanism
- * end to end, nothing more.
+ * its own image, and the guest sees physical RAM 1:1, so we arm it directly.
+ * emu68_bridge.c locates it; see that file for what this costs.
  */
-#define EMU68_INT_SHADOW_INTENA ((volatile UWORD *)0x34c620b0)
+static volatile UWORD *g_int_shadow;
 
 static inline void emu68_exter_enable(void)
 {
+    if (!g_int_shadow)
+        return;
+
     /*
      * Emu68's fast path tests (INT_shadow.INTENA & 0x6000) == 0x6000.
      *
@@ -72,7 +67,7 @@ static inline void emu68_exter_enable(void)
      * needed for the little-endian BCM peripherals -- see the drivers under
      * bcm283x/.
      */
-    *EMU68_INT_SHADOW_INTENA = INTF_INTEN | INTF_EXTER;
+    *g_int_shadow = INTF_INTEN | INTF_EXTER;
 }
 
 /*
@@ -341,10 +336,8 @@ BOOL platform_timer_start(const void *fdt, ULONG interval_us)
      * shadow is still clear that is the only one we ever get -- it records
      * ARMPending, skips INTF.ARM, and leaves the CPU deaf.
      */
-    /* If this already reads 1, an IRQ was taken before AROS ever ran and the
-     * CPU is already masked -- arming now cannot help. */
-    platform_trace_val("[exter] ARMPend@entry",
-                       *(volatile UBYTE *)0x34c620b4);
+    g_int_shadow = (volatile UWORD *)emu68_find_int_shadow();
+    platform_trace_val("[exter] INT_shadow ", (ULONG)g_int_shadow);
 
     emu68_exter_enable();
 
@@ -353,10 +346,8 @@ BOOL platform_timer_start(const void *fdt, ULONG interval_us)
 
     vectors[24 + PLATFORM_AUTOVECTOR_LEVEL] = Platform_Autovector_Direct;
 
-    platform_trace_val("[exter] shadow     ",
-                       *EMU68_INT_SHADOW_INTENA);
-    platform_trace_val("[exter] vector@0x78",
-                       *(volatile ULONG *)0x78);
+    platform_trace_val("[exter] INTENA     ",
+                       g_int_shadow ? *g_int_shadow : 0);
 
     g_timer_ops->SetPeriod(interval_us);
     g_timer_ops->Start();
