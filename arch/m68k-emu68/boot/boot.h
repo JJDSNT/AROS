@@ -15,7 +15,6 @@
 #define EMU68_BOOT_COLDSTART_READY (1UL << 6)
 #define EMU68_BOOT_SCHEDULER_ENTER (1UL << 7)
 #define EMU68_BOOT_TASK_RUNNING    (1UL << 8)
-#define EMU68_BOOT_TIMER_VALID     (1UL << 9)
 #define EMU68_BOOT_TIMER_DEVICE    (1UL << 10)
 #define EMU68_BOOT_TIMER_TICKING   (1UL << 11)
 #define EMU68_BOOT_TIMER_WAKEUP    (1UL << 12)
@@ -65,10 +64,6 @@ struct Emu68BootContext
     const char *bootargs;
     uint32_t bootargs_size;
 
-    uint32_t timer_base;
-    uint32_t timer_size;
-    uint32_t timer_irq;
-    uint32_t timer_frequency;
     uint32_t timer_soak_seconds;
 
     void *exec_base;

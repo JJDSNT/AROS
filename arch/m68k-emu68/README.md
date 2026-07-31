@@ -108,13 +108,38 @@ RAM. The system memory header consequently satisfies both `MEMF_CHIP` and
 presence of an Amiga chipset. AArch64 native targets solve the same legacy
 requirement by removing `MEMF_CHIP` in their platform allocator.
 
-## Virtual platform timer
+## Real platform timer and interrupt controller (`platform/`)
 
-Emu68 owns the physical ARM timer and publishes an `emu68,virtual-timer-v1`
-device through the guest FDT. AROS discovers its MMIO range and m68k autovector
-level from that FDT instead of relying on fixed addresses.
+There is no synthetic timer device on either side of this port. Emu68 hands
+AROS the real Raspberry Pi FDT (patched only so that `/soc`'s `ranges` point
+at the guest-accessible virtual window Emu68 already mapped for its own
+peripheral access, in `src/raspi/start_rpi64.c:map_peripheral_ranges()` -
+this remap already carries `MMU_ALLOW_EL0`, so the guest gets the same real
+register access the host has, no Emu68 changes required); `arch/m68k-emu68/
+platform/fdt.c` walks that FDT post-heap, and `platform.c` matches
+`compatible` strings under `/soc` against a small static driver table -
+`platform/bcm283x/system_timer.c` (`compatible = "brcm,bcm2835-system-timer"`)
+and `platform/bcm283x/interrupt_controller.c`
+(`compatible = "brcm,bcm2836-armctrl-ic"`) - translating each match's `reg`
+through `/soc`'s `ranges` to get a real, guest-writable MMIO address. This is
+the same shape `arch/aarch64-native/kernel/platform_bcm2708.c` uses to drive
+the identical silicon on bare ARM hardware; the only structural difference is
+that dispatch arrives over the m68k level-6 autovector (Emu68's fixed
+"EXTER" channel, which every real physical IRQ not claimed by one of Emu68's
+own virtual devices already uses unconditionally) instead of an ARM64 vector
+table entry, so the right driver has to be found and armed at runtime rather
+than being link-time fixed.
 
-The m68k kernel acknowledges this virtual IRQ and translates it into Exec's
+`platform.c` installs one shared level-6 trampoline that hands off to
+whichever interrupt controller driver was discovered; that driver decodes
+`ARMIRQ_PEND`/`GPUIRQ_PEND0`/`GPUIRQ_PEND1` (same registers, same offsets as
+`hardware/bcm2708.h`) to find which real source fired and calls
+`krnRunIRQHandlers()`. `arch/m68k-emu68/kernel/kernel_arch.h` wires
+`ictl_enable_irq()`/`ictl_disable_irq()` to that same driver, so
+`KrnAddIRQHandler()` unmasks real hardware exactly as it does on
+`aarch64-native`/`arm-native`.
+
+The system timer driver acknowledges its IRQ and translates it into Exec's
 standard `INTB_VERTB` heartbeat. The generic `timer.device` consumes that
 heartbeat, so it contains no Emu68, Raspberry Pi, CIA, Paula, or custom-chip
 knowledge. Its period is derived from `SysBase->VBlankFrequency`.
@@ -168,13 +193,31 @@ the m68k vector table:
 xp /4bx 0x400
 ```
 
-The currently validated final marker is `45 30 31 38` (`E018`), meaning that
-Exec initialized, scheduled a user task, received virtual timer interrupts,
-advanced `timer.device`, blocked on `TR_ADDREQUEST`, and woke the task again.
-It additionally confirms coherent elapsed time, simultaneous requests,
-`AbortIO()`, two-minute stability, and continued progress of two competing
-worker tasks. Use `screendump /tmp/aros.ppm` in the QEMU monitor to capture the
-framebuffer console.
+Before the virtual timer was removed, this exact QEMU setup validated the
+full soak to `45 30 31 38` (`E018`): Exec initialized, scheduled a user task,
+received timer interrupts (then via Emu68's synthetic device, backed by the
+ARM CPU's own architectural timer and delivered through the ARM-local
+`BCM2836_TIMER_INT_CTRL0`/CNT-IRQ path), advanced `timer.device`, blocked on
+`TR_ADDREQUEST`, woke the task again, and held up for two minutes of
+simultaneous requests, `AbortIO()`, and equal-priority round-robin. That
+confirms this QEMU configuration is not, in general, too slow or unreliable
+for interrupt-driven timing.
+
+**Current status with the real platform timer**: FDT discovery, `/soc`
+address translation and IRQ registration all run and log correctly (the
+`brcm,bcm2835-system-timer`/`brcm,bcm2836-armctrl-ic` nodes resolve to the
+same real, guest-accessible addresses Emu68's own host-side code uses).
+But under `qemu-system-aarch64 -M raspi3b`, the System Timer's compare-match
+status bit never sets, even though `SYSTIMER_CLO` visibly free-runs past the
+programmed `SYSTIMER_C3` target. Given the architectural-timer/CNT-IRQ path
+above is proven reliable on this exact QEMU machine, this looks like a gap
+specific to QEMU's emulation of the legacy BCM2835 system timer's
+compare-match/IRQ-generation logic (a peripheral path modern Linux mostly
+doesn't exercise anymore, unlike the ARM generic timer) rather than a bug in
+this driver or in Emu68's FDT/MMIO exposure - but it has not been confirmed
+against real Raspberry Pi 3 hardware yet, which is required before treating
+that as settled. Use `screendump /tmp/aros.ppm` in the QEMU monitor to
+capture the framebuffer console.
 
 ## Debug console (0xdeadbeef)
 
