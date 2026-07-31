@@ -147,10 +147,16 @@ what happened here, and why the compare never matched.
 
 ### Interrupt delivery
 
-Dispatch arrives over the m68k level-6 autovector - Emu68's fixed "EXTER"
-channel for any real physical IRQ - rather than an ARM64 vector table entry,
-so the right driver has to be found and armed at runtime instead of being
-link-time fixed. That much is a straightforward remap.
+> **This path does not work on a standalone Emu68 build.** The protocol
+> below is real, but the code implementing it is compiled out unless Emu68
+> is built as a PiStorm variant. See "Interrupt delivery is PiStorm-only"
+> under Current status. The description is kept because it is what the port
+> targets and what `platform.c` implements.
+
+Dispatch arrives over the m68k level-6 autovector - Emu68's "EXTER" channel
+for a real physical IRQ - rather than an ARM64 vector table entry, so the
+right driver has to be found and armed at runtime instead of being link-time
+fixed. That much is a straightforward remap.
 
 The part that is not: Emu68's core-0 IRQ fast path
 (`src/aarch64/vectors.c`, `curr_el_spx_irq`) drives that channel off an
@@ -289,13 +295,10 @@ Working:
 - Interrupt controller. `GPUIRQ_ENBL0` bit 3 is unmasked and, once the
   compare latches, `GPUIRQ_PEND0` bit 3 reads pending.
 
-Not working - **open, under investigation**:
+Not working - **blocked, cause identified**:
 
 The interrupt is never delivered to AROS. Everything upstream of Emu68's
-bridge works; the bridge itself is unreachable in this configuration.
-
-The arming write (`INTENA <- SET|INTEN|EXTER`) lands in RAM instead of being
-trapped by Emu68:
+bridge works; the bridge itself does not exist in this build.
 
 ```text
 [exter] INTENAR     0x00000000   Emu68's shadow: never written
@@ -304,27 +307,50 @@ trapped by Emu68:
 [exter] INTREQR     0x00000000   Emu68 never set ARMPending
 ```
 
-Writing `0xE000` to `0xdff09a` and reading `0xE000` back proves that address
-is **ordinary RAM in this guest's memory map**. Emu68 never faults on the
-access, so `INT_shadow.INTENA` stays zero, so the fast path never sets
-`INTF.ARM`, so level 6 is never raised.
+#### Interrupt delivery is PiStorm-only
 
-This follows from where Emu68 came from: an Amiga guest never has RAM at
-`0xdff000` (chip RAM tops out at 2 MB), so the custom-chip range is naturally
-unmapped and faults into the emulator. AROS here gets a flat RAM block that
-swallows it.
+Writing `0xE000` to `0xdff09a` and reading it back proves that address is
+ordinary RAM here - Emu68 never faults on the access. But the memory map is
+not the blocker, and changing it would not help. The chain, verified against
+upstream `michalsc/Emu68`:
 
-Open question, and the reason this is not yet fixed: it is not established
-whether the guest memory map is decided by Emu68 or by what AROS claims. If
-AROS can simply avoid claiming that page, this is a small change. If Emu68
-maps the region unconditionally, reaching the EXTER bridge would require a
-firmware change - which conflicts with this port's goal of running on
-unmodified Emu68, and would mean the interrupt path needs a different
-approach entirely. That question has to be answered before choosing a fix.
+| Fact | Location |
+|---|---|
+| All `INTENA`/`INTREQ`/`INT_shadow` handling sits inside `#ifdef PISTORM_ANY_MODEL` | `vectors.c:314`-`723` |
+| A standalone build is `VARIANT=none`, so that macro is undefined | `CMakeLists.txt:245` |
+| The non-PiStorm `SYSWriteValToAddr` special-cases only `0xdeadbeef`; everything else writes through to a linear alias | `vectors.c:726` |
+| Core 0 is served entirely by the assembly IRQ fast path | `vectors.c:148`-`171` |
+| That fast path raises level 6 only when `(INT_shadow.INTENA & 0x6000) == 0x6000` | same |
+| `IRQHandler` (C), whose `cpu_id == 0` branch would set `INTF.ARM` *without* that gate, is reached only from `IRQonOtherCores` - cores 1-3 | `vectors.c:170`, `271` |
+
+`INT_shadow` is a zero-initialised global that nothing writes on a
+standalone build, so the gate never opens: **a physical IRQ cannot raise m68k
+level 6 on stock non-PiStorm Emu68.** This is not misconfiguration - Emu68
+assumes a real Amiga supplies `INTENA`/`INTREQ` across the PiStorm bus.
 
 Consequently the level-6 arm/acknowledge code in `platform.c` is correct in
-form but inert in this configuration, and has not been exercised. Real
-Raspberry Pi 3 hardware validation is still outstanding.
+form but inert, and has never been exercised. It also explains, in
+retrospect, why this port originally carried an Emu68-side virtual timer
+device: on standalone Emu68 that was the only way to get an interrupt into
+the guest at all.
+
+Who decides the guest memory map, for the record: Emu68 does. It maps the
+FDT `/memory` blocks 1:1 up to `0xf2000000` (`start.c:1362`) and punches
+exactly one deliberate hole, for the `0xdeadbeef` debug channel
+(`start.c:1373`). AROS receives the resulting RAM range via FDT and has no
+say in it.
+
+#### Options
+
+| Option | Assessment |
+|---|---|
+| Upstream Emu68 patch - seed `INT_shadow.INTENA` at init on non-PiStorm builds, or let core 0 reach `M68kReportInterrupt(1)` | Small, fixes a genuine gap (no standalone guest can receive a physical IRQ today), upstreamable. Moves "stock Emu68" to a future release rather than abandoning it |
+| Revive the Emu68-side virtual device | Known to work, but reintroduces a firmware fork |
+| Poll instead of interrupt | No preemption; degrades the scheduler |
+| Build a PiStorm variant | Expects real Amiga hardware on the bus; not viable on a plain Pi |
+
+Real Raspberry Pi 3 hardware validation remains outstanding, but is not
+expected to differ: the blocker is a build-time conditional, not timing.
 
 ### Superseded diagnosis
 
