@@ -74,9 +74,9 @@ static void coldstart_user(void)
     emu68_console_puts("[AROS/Emu68] InitCode COLDSTART in user mode\n");
 
     /*
-     * COLDSTART may enter dosboot.resource and never return while it waits for
-     * boot media. Start the platform heartbeat before resident
-     * initialization so timer.device and the boot animation can use it.
+     * Start the platform heartbeat before resident initialization, so
+     * timer.device and the boot animation have a tick source as soon as they
+     * come up.
      */
     timer_interval_us = SysBase->VBlankFrequency
         ? 1000000UL / SysBase->VBlankFrequency
@@ -87,73 +87,18 @@ static void coldstart_user(void)
     else
         emu68_console_puts("[AROS/Emu68] platform timer not found\n");
 
+    /*
+     * This does not return, and every other AROS target relies on that:
+     * dosboot.resource's init function either hands over to dos.library or
+     * loops forever retrying for boot media, so control never comes back.
+     * arch/aarch64-native treats a return as fatal ("System Boot Failed!").
+     *
+     * Boot with "sysdebug=InitCode" to see the resident list and watch each
+     * module initialize.
+     */
     InitCode(RTF_COLDSTART, 0);
-    ctx->flags |= EMU68_BOOT_COLDSTART_READY;
 
-    if (FindName(&SysBase->DeviceList, "timer.device"))
-    {
-        ctx->flags |= EMU68_BOOT_TIMER_DEVICE;
-        emu68_console_puts("[AROS/Emu68] timer.device initialized\n");
-    }
-    else
-        emu68_console_puts("[AROS/Emu68] timer.device unavailable\n");
-
-    if (FindName(&SysBase->LibList, "utility.library") &&
-        FindName(&SysBase->LibList, "oop.library") &&
-        FindName(&SysBase->LibList, "hiddclass.hidd"))
-        emu68_console_puts(
-            "[AROS/Emu68] utility/oop/HIDD residents initialized\n");
-    else
-        emu68_console_puts(
-            "[AROS/Emu68] foundational resident initialization failed\n");
-
-    if (FindName(&SysBase->ResourceList, "bootloader.resource") &&
-        FindName(&SysBase->LibList, "gfx.hidd"))
-        emu68_console_puts(
-            "[AROS/Emu68] bootloader/gfx HIDD residents initialized\n");
-    else
-        emu68_console_puts(
-            "[AROS/Emu68] pre-graphics resident initialization failed\n");
-
-    if (FindName(&SysBase->LibList, "emu68gfx.hidd") &&
-        FindName(&SysBase->LibList, "graphics.library"))
-        emu68_console_puts(
-            "[AROS/Emu68] graphics.library initialized with Emu68 display driver\n");
-    else
-        emu68_console_puts(
-            "[AROS/Emu68] graphics/display driver initialization failed\n");
-
-    if (FindName(&SysBase->LibList, "layers.library"))
-        emu68_console_puts("[AROS/Emu68] layers.library initialized\n");
-    else
-        emu68_console_puts("[AROS/Emu68] layers.library initialization failed\n");
-
-    if (FindName(&SysBase->LibList, "keymap.library"))
-        emu68_console_puts("[AROS/Emu68] keymap.library initialized\n");
-    else
-        emu68_console_puts("[AROS/Emu68] keymap.library initialization failed\n");
-
-    if (FindName(&SysBase->DeviceList, "input.device"))
-        emu68_console_puts("[AROS/Emu68] input.device initialized\n");
-    else
-        emu68_console_puts("[AROS/Emu68] input.device initialization failed\n");
-
-    if (FindName(&SysBase->LibList, "intuition.library"))
-        emu68_console_puts("[AROS/Emu68] intuition.library initialized\n");
-    else
-        emu68_console_puts("[AROS/Emu68] intuition.library initialization failed\n");
-
-    emu68_set_stage(EMU68_STAGE_MULTITASKING);
-    emu68_console_puts("[AROS/Emu68] Exec multitasking enabled\n");
-
-    if (!emu68_scheduler_selftest_start())
-        emu68_console_puts("[AROS/Emu68] failed to start scheduler selftest\n");
-
-    ctx->flags |= EMU68_BOOT_SCHEDULER_ENTER;
-    emu68_set_stage(EMU68_STAGE_SCHEDULER);
-    Reschedule();
-    emu68_set_stage(EMU68_STAGE_SCHED_RETURN);
-    emu68_console_puts("[AROS/Emu68] scheduler returned to bootstrap\n");
+    emu68_console_puts("[AROS/Emu68] InitCode COLDSTART returned -- boot failed\n");
 
     for (;;)
         ;

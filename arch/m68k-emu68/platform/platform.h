@@ -78,11 +78,13 @@ struct PlatformDriver
  * the platform layer can trace during early boot without depending on
  * anything from boot/ having been linked or initialised yet.
  *
- * Left enabled while interrupt delivery is still unresolved -- see the
- * "Interrupt delivery" section of this directory's README. Set to 0 to
- * silence it; the call sites stay in place.
+ * Off: these existed to bring interrupt delivery up, and that job is now
+ * done by boot/selftest.c, which measures the same path from above (level-6
+ * ticks, timer.device wakeups, preemption under a two-minute soak) instead
+ * of narrating it register by register. Set to 1 to get the raw traces back
+ * when touching the delivery path itself; the call sites stay in place.
  */
-#define PLATFORM_TRACE_BRINGUP 1
+#define PLATFORM_TRACE_BRINGUP 0
 
 #if PLATFORM_TRACE_BRINGUP
 

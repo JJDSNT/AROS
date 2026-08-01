@@ -1,11 +1,25 @@
 /*
  * Timer and scheduler validation for the native Emu68 target.
+ *
+ * Off by default. This existed to answer one question -- whether the level-6
+ * autovector path, timer.device on top of it, and preemptive scheduling
+ * actually work -- and it has answered it: the full suite, including a
+ * two-minute soak with two spinning workers, passes. Leaving it on costs
+ * two minutes of every boot and holds the machine at priority 125 while it
+ * runs. Set to 1 to re-run it after touching interrupt delivery, the
+ * platform timer, or the scheduler.
  */
+#define EMU68_SELFTEST 0
+
+#if EMU68_SELFTEST
 
 #include "boot.h"
 
+#include <aros/asmcall.h>
 #include <devices/timer.h>
 #include <exec/errors.h>
+#include <exec/nodes.h>
+#include <exec/resident.h>
 #include <proto/exec.h>
 #include <utility/tagitem.h>
 
@@ -22,15 +36,23 @@ extern volatile ULONG emu68_platform_ticks;
 static volatile ULONG worker_counter_a;
 static volatile ULONG worker_counter_b;
 
+/*
+ * The workers exist only to give the probe something to observe being
+ * scheduled. They run at a priority above the boot task, so they have to be
+ * told to stop -- otherwise they starve dosboot.resource for good once the
+ * probe is finished.
+ */
+static volatile BOOL workers_stop;
+
 static void scheduler_worker_a(void)
 {
-    for (;;)
+    while (!workers_stop)
         worker_counter_a++;
 }
 
 static void scheduler_worker_b(void)
 {
-    for (;;)
+    while (!workers_stop)
         worker_counter_b++;
 }
 
@@ -261,16 +283,24 @@ static void platform_timer_probe(void)
         "[AROS/Emu68] platform timer: tick 2\n",
         "[AROS/Emu68] platform timer: tick 3\n",
     };
+    ULONG base = emu68_platform_ticks;
     ULONG seen;
 
+    /*
+     * Count from wherever the platform timer already is. This probe runs long
+     * after platform_timer_start(), so an absolute comparison against zero
+     * would be satisfied by ticks that arrived before we were even created
+     * and would prove nothing.
+     */
     for (seen = 0; seen < 3; seen++)
     {
         ULONG spins = 0;
 
-        while (emu68_platform_ticks <= seen && spins < EMU68_TICK_SPIN_LIMIT)
+        while (emu68_platform_ticks <= base + seen &&
+               spins < EMU68_TICK_SPIN_LIMIT)
             spins++;
 
-        if (emu68_platform_ticks <= seen)
+        if (emu68_platform_ticks <= base + seen)
         {
             emu68_console_puts(seen == 0
                 ? "[AROS/Emu68] platform timer: no interrupt delivered\n"
@@ -349,8 +379,9 @@ static void scheduler_probe(void)
     else
         emu68_console_puts("[AROS/Emu68] timer/scheduler soak failed\n");
 
-    for (;;)
-        ;
+    /* Release the workers and exit, so the boot can carry on into
+     * dosboot.resource with the machine in its normal state. */
+    workers_stop = TRUE;
 }
 
 int emu68_scheduler_selftest_start(void)
@@ -377,3 +408,62 @@ int emu68_scheduler_selftest_start(void)
 
     return result;
 }
+
+/*
+ * The selftest is a resident, not a call from the bootstrap.
+ *
+ * InitCode(RTF_COLDSTART) is the last thing every AROS target does and it is
+ * not expected to return -- dosboot.resource's init function ends in an
+ * infinite "attempt to boot / no media / retry" loop, and on a successful
+ * boot it hands over to dos.library instead. arch/aarch64-native panics with
+ * "System Boot Failed!" if it ever does come back. So anything the bootstrap
+ * schedules after that call is unreachable by design, not by accident.
+ *
+ * Being a resident puts the test inside COLDSTART instead, and rt_Pri picks
+ * the exact moment. timer.device is residentpri 50 and dosboot.resource is
+ * residentpri -50; -49 is therefore the last slot before dosboot, with the
+ * whole system -- timer.device, graphics, intuition -- already up.
+ *
+ * Boot with "sysdebug=InitCode" to watch the resident list and the order
+ * this actually runs in (rom/kernel/prepareexecbase.c prints the roster with
+ * each module's flags, rom/exec/initcode.c narrates each InitResident).
+ *
+ * kernel_romtags.c finds this by scanning __aros_resident_start ..
+ * __aros_resident_end for RTC_MATCHWORD, so no module wrapper or .conf is
+ * needed -- but the tag has to go in .aros.romtag rather than plain .rodata.
+ * See boot/emu68.ld for why: as ordinary .rodata this lands inside the span
+ * dosboot's rt_EndSkip tells the scanner to jump over, and is never seen.
+ */
+static AROS_UFH3(void, selftest_ResidentInit,
+    AROS_UFHA(struct Library *, lh, D0),
+    AROS_UFHA(BPTR, segList, A0),
+    AROS_UFHA(struct ExecBase *, sysBase, A6))
+{
+    AROS_USERFUNC_INIT
+
+    (void)lh;
+    (void)segList;
+    (void)sysBase;
+
+    if (!emu68_scheduler_selftest_start())
+        emu68_console_puts("[AROS/Emu68] failed to start scheduler selftest\n");
+
+    AROS_USERFUNC_EXIT
+}
+
+static const struct Resident emu68_selftest_romtag
+    __attribute__((section(".aros.romtag"), used)) =
+{
+    RTC_MATCHWORD,
+    (struct Resident *)&emu68_selftest_romtag,
+    (APTR)(&emu68_selftest_romtag + 1),
+    RTF_COLDSTART,
+    41,
+    NT_UNKNOWN,
+    -49,
+    "emu68selftest",
+    "emu68 timer/scheduler selftest 41.1\r\n",
+    (APTR)selftest_ResidentInit
+};
+
+#endif /* EMU68_SELFTEST */

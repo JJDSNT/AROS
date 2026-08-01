@@ -250,11 +250,63 @@ qemu-system-aarch64 \
   -monitor unix:/tmp/emu68-monitor.sock,server,nowait
 ```
 
+Drop `-display none` to get the framebuffer console in a window; the serial
+log keeps coming out on the terminal either way. Close with `Ctrl-A` `X`.
+
 Connect to the monitor with:
 
 ```sh
 nc -U /tmp/emu68-monitor.sock
 ```
+
+### Kernel arguments (`-append`)
+
+QEMU writes `-append` into the DTB as `/chosen/bootargs`, `boot.c` passes it
+through as `KRN_CmdLine`, and `PrepareExecBase` (`rom/exec/prepareexecbase.c`)
+parses `sysdebug=` out of it into `SysBase->ex_DebugFlags`. So AROS's runtime
+debug flags work here with no rebuild:
+
+```sh
+qemu-system-aarch64 -M raspi3b \
+  -kernel /path/to/Emu68.raw.img \
+  -dtb /path/to/bcm2710-rpi-3-b.dtb \
+  -initrd bin/emu68-m68k/AROS/aros-emu68-m68k.elf \
+  -append "sysdebug=InitCode" \
+  -serial stdio -no-reboot
+```
+
+`InitCode` is the most useful one during bring-up. It turns on two separate
+printouts:
+
+- `rom/kernel/prepareexecbase.c` dumps the whole resident list once it is
+  built, as `addr: pri flags version name`. The flags column is the init
+  class - `01` `RTF_COLDSTART`, `02` `RTF_SINGLETASK`, `04` `RTF_AFTERDOS`,
+  `80` `RTF_AUTOINIT` (hence the `81` on most modules).
+- `rom/exec/initcode.c` narrates each pass: `enter InitCode(0x01, 0)`, one
+  `calling InitResident (pri flags "name")` per module, then `leave`.
+
+```text
+Resident modules (addr: pri flags version name):
++ 34605b20:  127 02   4 "kernel.resource"
++ 3460f53c:  120 01  51 "exec.library"
++ 3460fefc:   50 81  41 "timer.device"
++ 34629cda:    9 81  45 "emu68gfx.hidd"
++ 3468044e:  -50 01  41 "dosboot.resource"
++ 3467dcf4: -120 00  50 "dos.library"
++ 34692160: -121 04  41 "DOSBoot cleanup"
+```
+
+Flags are comma-separated (`sysdebug=InitCode,InitResident`); the full list
+of names is `ExecFlagNames` in `rom/exec/exec_flags.c`. Note that the
+`Resident modules` dump comes from the kernel and the `InitCode:` lines come
+from exec, so seeing one without the other means the flag was applied later
+than the printout you are missing.
+
+To pinpoint a module that hangs during init rather than just knowing which
+ones ran, put `#define DEBUG 1` above `#include <aros/debug.h>` in that
+module's source and rebuild - its `D(bug(...))` calls reach the same serial
+channel. That is how `dosboot.resource` was confirmed to be sitting in its
+retry loop rather than stuck.
 
 Read memory as **bytes** (`xp /4bx`), not words. The word view renders the
 byte order in a way that is easy to misread on a little-endian peripheral,
@@ -418,8 +470,6 @@ a diagnosable failure rather than a write into a running firmware image.
 
 Real Raspberry Pi 3 hardware validation remains outstanding.
 
-Real Raspberry Pi 3 hardware validation remains outstanding.
-
 ### Superseded diagnosis
 
 An earlier revision of this document attributed the dead timer to a gap in
@@ -430,6 +480,58 @@ driver was writing byte-reversed values, so the target the hardware actually
 held was ~512 seconds in the future while `CLO` was still in the hundreds of
 milliseconds. QEMU emulates this peripheral correctly. The same bug would
 have failed identically on real hardware.
+
+## Adding a ROMTag: `.aros.romtag` in `boot/emu68.ld`
+
+A port-local module can join the normal AROS startup by dropping a
+`struct Resident` into the image - `krnRomTagScanner()` sweeps
+`__aros_resident_start` .. `__aros_resident_end` looking for
+`RTC_MATCHWORD`, so no `.conf` file or genmodule wrapper is needed. But on
+this target the tag **must** go in the `.aros.romtag` section:
+
+```c
+static const struct Resident my_romtag
+    __attribute__((section(".aros.romtag"), used)) =
+{
+    RTC_MATCHWORD, (struct Resident *)&my_romtag, (APTR)(&my_romtag + 1),
+    RTF_COLDSTART, 41, NT_UNKNOWN, -49,
+    "myname", "my id string\r\n", (APTR)my_init
+};
+```
+
+The reason is a trap. The scanner is a linear sweep, and every time it finds
+a ROMTag it jumps straight to that tag's `rt_EndSkip` - which is a symbol
+belonging to the module, intended to skip past that module's own body. But
+`boot/emu68.ld` gathers **all** `.text` from every object before **all**
+`.rodata`, so a module whose `rt_EndSkip` resolves into the `.rodata` block
+ends up claiming everything the linker happened to place in between.
+`dosboot.resource` is the worst case: its `rt_EndSkip` points at
+`db_Cleanup` (the `addromtag db_Cleanup` in `rom/dosboot/dosboot.conf`),
+roughly 70 KB further on. A ROMTag landing inside that span is skipped in
+complete silence - no warning, no error, the module simply never
+initializes.
+
+`.aros.romtag` is placed immediately after `.text.boot` and ahead of every
+module's `.text`, which is the one position that cannot be inside another
+tag's skip range. Verify placement with:
+
+```sh
+m68k-aros-nm -n bin/emu68-m68k/AROS/aros-emu68-m68k.elf | grep -i romtag
+```
+
+Your tag should appear near address 0, before `Timer_ROMTag`.
+
+`rt_Pri` chooses when it runs within its init class - the list is sorted
+descending. `timer.device` is 50 and `dosboot.resource` is -50, so `-49` is
+the last slot before dosboot, with the entire system already up. That is
+where `boot/selftest.c` registers itself (`EMU68_SELFTEST`, off by default).
+
+That -50 boundary matters more than it looks: `InitCode(RTF_COLDSTART, 0)`
+never returns. `dosboot_Init()` either hands over to dos.library or loops
+forever retrying for boot media, which is why `arch/aarch64-native` treats a
+return from it as fatal (`krnPanic("System Boot Failed!")`). Anything that
+needs to run at COLDSTART has to be a resident with `rt_Pri > -50`; code
+placed after the `InitCode()` call in `coldstart_user()` is unreachable.
 
 ## Debug console (0xdeadbeef)
 
