@@ -11,7 +11,9 @@
 #include <aros/kernel.h>
 #include <exec/memory.h>
 #include <exec/resident.h>
+#include <libraries/configregs.h>
 #include <proto/exec.h>
+#include <proto/expansion.h>
 #include <utility/tagitem.h>
 
 #include "kernel_base.h"
@@ -65,6 +67,42 @@ void emu68_set_stage(uint32_t stage)
     *(volatile uint32_t *)0x400 = stage;
 }
 
+/*
+ * Enumerate the Zorro bus.
+ *
+ * Emu68 offers a Zorro III ROM board carrying its own m68k modules --
+ * brcm-sdhc.device, mailbox.resource, gic400.library, devicetree.resource and
+ * others -- and answers the autoconfig cycles for it at E_EXPANSIONBASE
+ * (Emu68 src/aarch64/vectors.c). Walking that bus is what makes them appear.
+ *
+ * rom/expansion/expansion_init.c calls ConfigChain() itself, but only under
+ * #if (AROS_FLAVOUR & AROS_FLAVOUR_BINCOMPAT), and configure gives this target
+ * aros_flavour="standalone". Running m68k binaries is where this port is
+ * headed, so bincompat is the right destination and this call goes away when
+ * we get there; until then it is the smaller change.
+ *
+ * Timing is not free choice. An expansion ROM registers its modules through
+ * KickTags, and InitCode() picks those up in InitKickTags() at the very start
+ * of the RTF_COLDSTART pass (rom/exec/initcode.c:66). So the bus has to be
+ * walked before that call -- and it can be, because expansion.library is
+ * RTF_SINGLETASK and came up in the earlier pass.
+ */
+static void emu68_configure_expansion(void)
+{
+    struct Library *ExpansionBase = OpenLibrary("expansion.library", 0);
+
+    if (!ExpansionBase)
+    {
+        emu68_console_puts("[AROS/Emu68] expansion.library unavailable\n");
+        return;
+    }
+
+    ConfigChain((APTR)E_EXPANSIONBASE);
+    CloseLibrary(ExpansionBase);
+
+    emu68_console_puts("[AROS/Emu68] Zorro bus configured\n");
+}
+
 static void coldstart_user(void)
 {
     struct Emu68BootContext *ctx = &emu68_boot_context;
@@ -86,6 +124,8 @@ static void coldstart_user(void)
         emu68_console_puts("[AROS/Emu68] platform timer enabled\n");
     else
         emu68_console_puts("[AROS/Emu68] platform timer not found\n");
+
+    emu68_configure_expansion();
 
     /*
      * This does not return, and every other AROS target relies on that:
