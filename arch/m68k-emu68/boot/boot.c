@@ -11,9 +11,7 @@
 #include <aros/kernel.h>
 #include <exec/memory.h>
 #include <exec/resident.h>
-#include <libraries/configregs.h>
 #include <proto/exec.h>
-#include <proto/expansion.h>
 #include <utility/tagitem.h>
 
 #include "kernel_base.h"
@@ -68,42 +66,22 @@ void emu68_set_stage(uint32_t stage)
 }
 
 /*
- * Enumerate the Zorro bus.
+ * Run each configured board's DiagPoint.
  *
- * Emu68 offers a Zorro III ROM board carrying its own m68k modules --
- * brcm-sdhc.device, mailbox.resource, gic400.library, devicetree.resource and
- * others -- and answers the autoconfig cycles for it at E_EXPANSIONBASE
- * (Emu68 src/aarch64/vectors.c). Walking that bus is what makes them appear.
+ * Emu68 offers a Zorro III ROM board carrying its own m68k modules and answers
+ * the autoconfig cycles for it at E_EXPANSIONBASE (Emu68
+ * src/aarch64/vectors.c). expansion.library walks that bus itself during its
+ * own init -- it is RTF_SINGLETASK, so this has already happened -- but
+ * enumerating a board is not the same as using it: what registers the modules
+ * a board carries is its DiagArea, and nothing in rom/ processes one.
  *
- * rom/expansion/expansion_init.c calls ConfigChain() itself, but only under
- * #if (AROS_FLAVOUR & AROS_FLAVOUR_BINCOMPAT), and configure gives this target
- * aros_flavour="standalone". Running m68k binaries is where this port is
- * headed, so bincompat is the right destination and this call goes away when
- * we get there; until then it is the smaller change.
- *
- * Timing is not free choice. An expansion ROM registers its modules through
- * KickTags, and InitCode() picks those up in InitKickTags() at the very start
- * of the RTF_COLDSTART pass (rom/exec/initcode.c:66). So the bus has to be
- * walked before that call -- and it can be, because expansion.library is
- * RTF_SINGLETASK and came up in the earlier pass.
+ * Timing is not free choice. An expansion ROM registers through KickTags, and
+ * InitCode() collects those in InitKickTags() at the very start of the
+ * RTF_COLDSTART pass (rom/exec/initcode.c:66), so this has to run before that
+ * call rather than from a resident inside it.
  */
 static void emu68_configure_expansion(void)
 {
-    struct Library *ExpansionBase = OpenLibrary("expansion.library", 0);
-
-    if (!ExpansionBase)
-    {
-        emu68_console_puts("[AROS/Emu68] expansion.library unavailable\n");
-        return;
-    }
-
-    ConfigChain((APTR)E_EXPANSIONBASE);
-    CloseLibrary(ExpansionBase);
-
-    emu68_console_puts("[AROS/Emu68] Zorro bus configured\n");
-
-    /* Now run each configured board's DiagPoint, which is what actually
-     * registers the modules it carries. See boot/diag.c. */
     emu68_diag_callroms();
 }
 

@@ -2208,7 +2208,7 @@ case "$target_os" in
         ;;
 
     emu68*)
-        aros_flavour="standalone"
+        aros_flavour="standcompat"
         aros_target_arch="emu68"
         aros_shared_default="no"
 

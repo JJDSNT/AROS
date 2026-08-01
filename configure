@@ -11322,7 +11322,7 @@ printf "%s\n" "$darwin_sdk_path" >&6; }
         ;;
 
     emu68*)
-        aros_flavour="standalone"
+        aros_flavour="standcompat"
         aros_target_arch="emu68"
         aros_shared_default="no"
 
