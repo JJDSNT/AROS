@@ -37,9 +37,23 @@
 #define GPUIRQ_DIBL1  0x20
 #define ARMIRQ_DIBL   0x24
 
-/* Bits 8/9 of ARMIRQ_PEND just mirror "something is pending in bank 0/1";
- * mask them out before treating the rest as real ARM-side sources. */
-#define ARMIRQ_BANK_MIRROR 0x300UL
+/*
+ * ARMIRQ_PEND only has eight real sources, in bits 0-7. Everything above
+ * that is a mirror and must never be dispatched:
+ *
+ *   bits 8,9   - "something is pending in bank 0 / bank 1"
+ *   bits 10-20 - duplicates of GPU IRQs 7, 9, 10, 18, 19, 53, 54, 55, 56,
+ *                57 and 62, provided so software can poll the common ones
+ *                without reading the GPU banks.
+ *
+ * Dispatching a mirror invents an IRQ number nobody registered a handler
+ * for, so the source is never acknowledged, stays pending, and the loop in
+ * intc_dispatch() spins forever inside the level-6 handler. Bit 20 mirrors
+ * GPU IRQ 62, the Arasan SD controller -- which is exactly how this was
+ * found. arch/arm-native and arch/aarch64-native avoid it by scanning only
+ * eight bits of this bank; so do we.
+ */
+#define ARMIRQ_REAL_BITS 8
 
 #define IRQ_BANK(irq)  ((irq) >> 5)
 #define IRQ_MASK(irq)  (1UL << ((irq) & 0x1f))
@@ -107,11 +121,12 @@ static void intc_disable(ULONG irq)
     intc_write(bank_disable_offset(IRQ_BANK(irq)), IRQ_MASK(irq));
 }
 
-static void scan_bank(struct KernelBase *KernelBase, ULONG pending, ULONG base)
+static void scan_bank(struct KernelBase *KernelBase, ULONG pending, ULONG base,
+                      ULONG bits)
 {
     ULONG bit;
 
-    for (bit = 0; bit < 32; bit++)
+    for (bit = 0; bit < bits; bit++)
     {
         if (pending & (1UL << bit))
             krnRunIRQHandlers(KernelBase, base + bit);
@@ -124,7 +139,8 @@ static void intc_dispatch(struct KernelBase *KernelBase)
 
     for (;;)
     {
-        pending_arm = intc_read(ARMIRQ_PEND) & ~ARMIRQ_BANK_MIRROR;
+        pending_arm = intc_read(ARMIRQ_PEND) &
+                      ((1UL << ARMIRQ_REAL_BITS) - 1);
         pending0 = intc_read(GPUIRQ_PEND0);
         pending1 = intc_read(GPUIRQ_PEND1);
 
@@ -132,11 +148,11 @@ static void intc_dispatch(struct KernelBase *KernelBase)
             break;
 
         if (pending_arm)
-            scan_bank(KernelBase, pending_arm, 2 << 5);
+            scan_bank(KernelBase, pending_arm, 2 << 5, ARMIRQ_REAL_BITS);
         if (pending0)
-            scan_bank(KernelBase, pending0, 0 << 5);
+            scan_bank(KernelBase, pending0, 0 << 5, 32);
         if (pending1)
-            scan_bank(KernelBase, pending1, 1 << 5);
+            scan_bank(KernelBase, pending1, 1 << 5, 32);
     }
 }
 
