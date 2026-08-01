@@ -11,21 +11,28 @@ SECTIONS
         KEEP(*(.text.boot))
 
         /*
-         * Port-local ROMTags go here, ahead of every module's.
-         *
-         * krnRomTagScanner() sweeps this whole range linearly, and on each
-         * ROMTag it finds it jumps straight to that tag's rt_EndSkip. A
-         * module's rt_EndSkip is a symbol in the module itself, and because
-         * this script gathers all .text before all .rodata, some of those
-         * spans reach far past the module's own code -- dosboot's covers
-         * roughly 70KB, swallowing everything the linker happened to place
-         * in between. A ROMTag landing inside such a span is never seen.
-         * Being first is the only placement that cannot be skipped.
+         * Port-local ROMTags, ahead of every module's. These belong to the
+         * bootstrap rather than to any module, so there is no module body for
+         * them to sit at the head of; putting them first keeps them out of
+         * every rt_EndSkip span there is.
          */
         KEEP(*(.aros.romtag))
 
-        *(.text .text.*)
-        *(.rodata .rodata.*)
+        /*
+         * One statement covering both, so the linker keeps each input file's
+         * .text and .rodata adjacent. This is what arch/m68k-amiga/boot/
+         * aros-rom.ld:15 does, and it is not cosmetic.
+         *
+         * krnRomTagScanner() sweeps this range linearly and, on every ROMTag
+         * it finds, leaps straight to that tag's rt_EndSkip -- a symbol at the
+         * end of the module the tag belongs to. Gathering all .text and then
+         * all .rodata separately tears every module in two and stretches those
+         * leaps across unrelated modules: dosboot's ended up spanning roughly
+         * 70KB, silently swallowing every ROMTag the linker had placed in
+         * between. rom/devs/sdcard's boot-wait resident was lost that way, and
+         * so was boot/selftest.c's until it was moved to .aros.romtag.
+         */
+        *(.text .text.* .rodata .rodata.*)
         __aros_resident_end = .;
     }
 
