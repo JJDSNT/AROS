@@ -152,6 +152,20 @@ slots and the guest registers "host IRQ N → slot M".
 **(b)** Emu68 reports only that *a* host interrupt occurred. The guest owns
 the host interrupt controller and decodes the source itself.
 
+> **Resolved: (b).** Upstream's answer:
+>
+> > CPU (emu68) reports interrupt by entering interrupt servicing routine
+> > (auto level vector 6) and it is up to OS to talk with the interrupt
+> > controller to find out one source of interrupt and call appropriate
+> > handler to serve it
+>
+> The rest of the document assumes this. It settles two things: the guest
+> decodes the source, and the delivery contract is **autovector level 6**,
+> fixed. Nothing below asks Emu68 to learn anything about Pi peripherals,
+> and the configurable-level idea is dropped (see below).
+>
+> It leaves the actual blocker open — see "What this does not yet answer".
+
 **We would argue for (b), and fairly strongly.** The AROS AArch64 port
 already contains an ARMCTRL/GIC driver that reads the pending banks and
 dispatches; our port reuses that code essentially unchanged. If Emu68 takes
@@ -162,12 +176,36 @@ across Pi models — for a benefit the guest does not need.
 It also matches the stated philosophy better. Emu68 supplies the CPU and an
 interrupt line; peripherals belong to the guest.
 
-Option (b) makes the ABI much smaller. A guest needs exactly three things it
-does not have today:
+Option (b) makes the ABI much smaller. With the level now settled at 6, a
+guest needs exactly two things it does not have today:
 
 1. **a mask it owns** (today: none — hence writing into `INT_shadow`);
-2. **a pending flag that round-trips** (today: broken, see above);
-3. **a level** (today: constant 6).
+2. **a pending flag that round-trips** (today: broken, see above).
+
+## What this does not yet answer
+
+The upstream answer describes the contract, and we agree with it. Our
+finding is that **on a stock, non-PiStorm build the contract is not
+currently met** — and specifically not the first clause.
+
+"CPU reports interrupt by entering interrupt servicing routine" is exactly
+what does not happen. The interrupt arrives, Emu68 takes the exception, and
+the level-6 autovector is never entered, because the fast path gates it on
+`INT_shadow.INTENA & 0x6000` and the only writer of that field is compiled
+out unless `PISTORM_ANY_MODEL` is defined. We verified the interrupt truly
+arrives by observing `ARMPending == 1`, stored unconditionally two
+instructions before the gate.
+
+So the open question is narrow, and it is the whole reason for this
+document:
+
+> On a stock Emu68, how should a guest with no Paula arm level-6 delivery
+> and acknowledge it afterwards?
+
+Everything in "What we think is practical" is one answer to that question.
+We are not attached to it. Any mechanism that lets a chipsetless guest open
+the gate and complete the cycle would let us delete our instruction
+scanner, which is the only outcome we actually need.
 
 ## What we think is practical
 
@@ -185,7 +223,6 @@ PiStorm and stock builds.
  bit  0     PEND     read: host IRQ pending
                      write 1: acknowledge (clears PEND and INTF.HOST)
  bit  1     ENA      guest's master enable for host interrupt delivery
- bits 4-6   LEVEL    m68k IPL to raise
  bit  31    PRESENT  reads 1 on any Emu68 implementing this ABI
 ```
 
@@ -194,12 +231,10 @@ PiStorm and stock builds.
 feature detection means installing an illegal-instruction handler around a
 probe. That works, but a presence bit is cheaper and clearer.
 
-**For v1 we would suggest `LEVEL` be read-only, reading 6.** The field is
-reserved in the layout and readable, but making it writable means the six
-SR-write sites in the table above must compare against a runtime value
-instead of a constant — emitted code on the hot path of every SR write. We
-do not think that cost is worth paying to get a level other than 6, and we
-would rather not have it be the reason the proposal stalls.
+There is deliberately no level field. Upstream has stated the contract as
+autovector level 6, so the level is not a guest-visible parameter, and the
+six SR-write sites in the table above keep comparing against a constant.
+That removes the most expensive part of our original sketch.
 
 ### Firmware side
 
@@ -247,9 +282,10 @@ which is only read on the cold path. Hot path touches `INT64` only.
 
 `Disable()`/`Enable()` in AROS exec is already `SR.IPL` manipulation, and
 Emu68 already honours it (`level > IPL_mask`, `ExecutionLoop.c:387`). Fine
-grained masking would duplicate that. `ENA` exists for the case `SR` cannot
-express: "the guest has not installed a handler yet." `LEVEL == 0` as
-"never raise" gives a clean third state for early boot.
+grained masking would duplicate that. `ENA` exists for the one case `SR`
+cannot express: "the guest has not installed a handler yet." That is the
+state we need during early boot, and it is the state a stock guest has no
+way to leave today.
 
 ### Cost
 
@@ -294,11 +330,11 @@ feature negotiation explicit rather than inferred from probing behaviour.
 `HOSTIRQ.PRESENT` is a one-bit stand-in for this. If a descriptor block
 ever exists, the presence bit becomes redundant, which is fine.
 
-### Writable `LEVEL`
+### ~~Writable `LEVEL`~~ — dropped
 
-Costs the six SR-write sites. Worth it only if guests genuinely want host
-interrupts at a level other than 6 — plausible for a guest that wants to
-mirror the Amiga's level structure for its own reasons, but speculative.
+Withdrawn. Upstream has stated the contract as autovector level 6, and we
+have no case that needs otherwise. Noted only because it was in the first
+version of this document.
 
 ### Vectored delivery
 
@@ -306,11 +342,15 @@ The 68k supports non-autovectored interrupts, where the device supplies the
 vector during the acknowledge cycle. `vector = 0x60 + (level << 2)` forecloses
 this today.
 
-For a chipsetless guest this is the real prize: one handler per device,
-with no polling decode at all. It is also the largest change, it interacts
-with option (a) above — someone has to know which source maps to which
-vector — and it is not needed to make our port work. We list it as the
-direction we would grow toward, not as a request.
+**With (b) settled, we withdraw this.** One handler per device requires the
+raising side to know which device raised the line — which is precisely what
+(b) says Emu68 does not do. A guest-supplied vector number would be
+mechanically easy (the guest programs a vector into `HOSTIRQ`, Emu68 uses it
+instead of the autovector), but against a single aggregate line it buys
+nothing: the guest still reads the pending banks to find the source, and
+then dispatches internally. Autovector 6 is the right answer here.
+
+Recorded so the reasoning is not rediscovered later, not as a request.
 
 ### Documented delivery semantics
 
@@ -340,10 +380,19 @@ register.
 
 ## Summary
 
-Practical: one control register, pending folded into a free `INTF` byte,
-`LEVEL` read-only at 6, the guest keeps owning the host interrupt
-controller. About 40 lines, no behavioural change for PiStorm, and it lets
-us delete an instruction scanner from our port.
+Settled with upstream: the guest owns the host interrupt controller and
+decodes the source, and delivery is autovector level 6. We agree, and both
+decisions shrink the proposal — no routing in Emu68, no level field, no
+vectored delivery.
+
+Still open, and the only thing we actually need: on a stock build there is
+no supported way for a chipsetless guest to arm level-6 delivery, because
+the gate is Paula's `INTENA` and its only writer is compiled out.
+
+Practical answer: one control register with two meaningful bits, pending
+folded into a free `INTF` byte so the JIT's inner-loop poll is unchanged.
+Roughly 40 lines, no behavioural change for PiStorm, and it lets us delete
+an instruction scanner from our port.
 
 Ideal: the above plus a firmware descriptor block, so that the next guest in
 our position does not have to invent the same hack we did.
