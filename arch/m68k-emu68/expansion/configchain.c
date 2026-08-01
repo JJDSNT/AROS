@@ -466,11 +466,28 @@ static void detectexpram(struct ExpansionBase *ExpansionBase)
 }
         
 
+/*
+ * Set to 0 to skip the bus walk entirely.
+ *
+ * expansion.library stays present and openable, so everything that merely
+ * opens it -- dosboot, partition.library -- carries on; only the enumeration
+ * is skipped and no board is ever found. Useful for getting past this point
+ * quickly when the question is what breaks *after* it, since under bincompat
+ * expansion_init.c calls this during RTF_SINGLETASK and a hang here stops the
+ * boot before almost anything else has run.
+ */
+#define EMU68_AUTOCONFIG 1
+
 AROS_LH1(void, ConfigChain,
         AROS_LHA(APTR, baseAddr, A0),
         struct ExpansionBase *, ExpansionBase, 11, Expansion)
 {
     AROS_LIBFUNC_INIT
+
+#if !EMU68_AUTOCONFIG
+    D(bug("[expansion:emu68] %s: autoconfig disabled\n", __func__));
+    return;
+#else
 
     struct ConfigDev *configDev = NULL;
 
@@ -507,6 +524,8 @@ AROS_LH1(void, ConfigChain,
     D(bug("[expansion:am68k] %s: configchain done\n", __func__));
 
     detectexpram(ExpansionBase);
+
+#endif /* EMU68_AUTOCONFIG */
 
     AROS_LIBFUNC_EXIT
 } /* ConfigChain */
