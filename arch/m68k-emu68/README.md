@@ -471,6 +471,50 @@ the genuinely little-endian BCM peripherals.
 
 Real Raspberry Pi 3 hardware validation remains outstanding.
 
+#### To revisit: `INTF.IPL` instead of the shadow
+
+What we have works, but it is an Amiga-shaped channel bolted onto a machine
+with no Amiga chipset. Every host interrupt, whatever it is, arrives as level 6
+because EXTER is the only door, and getting through that door means Emu68
+maintaining an `INT_shadow` and the guest programming `INTENA`/`INTREQ` to
+open it. PiStorm needs that indirection because it is snooping a real Paula on
+a real bus. We are inventing a Paula in order to talk to ourselves.
+
+There is a more direct path already in the CPU model. `struct M68KState` has
+an `INTF` union (`Emu68 include/M68k.h:168`) whose `IPL` field is the m68k
+interrupt priority level, and the execution loop already consumes it
+(`src/ExecutionLoop.c:341`):
+
+```c
+if (ctx->INTF.ARM)      level = 6;      /* our door */
+else if (ctx->INTF.PPC) level = 2;
+
+#if defined(PISTORM)                    /* PiStorm32 */
+    if (ctx->INTF.IPL > level) level = ctx->INTF.IPL;
+#else                                   /* PiStorm classic */
+    if (ctx->INTF.IPL) { ... GetIPLLevel(); ... }
+#endif
+```
+
+The PiStorm32 branch is the shape worth copying: one comparison, and the level
+comes straight from a field the IRQ fast path could set. A host interrupt would
+then arrive at whatever level suits it rather than being funnelled into EXTER,
+and neither Emu68 nor the guest would need `INT_shadow` for it at all.
+
+Two things this note is careful about, because both were got wrong along the
+way. First, the expensive `GetIPLLevel()` GPIO read belongs to *classic*
+PiStorm, which has to sample real IPL pins; it is not the cost of using
+`INTF.IPL`, and an earlier reading of this code wrongly concluded that driving
+IPL would burden the JIT's hot loop. Second, the consumer is compiled out for
+a standalone build -- neither branch above is reachable without
+`PISTORM`/`PISTORM_CLASSIC` -- so this is not a free switch: it needs a
+non-PiStorm branch of its own, in the same spirit as the interrupt-register
+and autoconfig work already done.
+
+`doc/host-interrupts.md` records the two options that were on the table when
+the EXTER route was chosen. This is a third, and it is the one that stops
+pretending there is a Paula.
+
 ### Superseded diagnosis
 
 An earlier revision of this document attributed the dead timer to a gap in
