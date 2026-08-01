@@ -2,7 +2,8 @@ include $(SRCDIR)/config/aros.cfg
 
 TARGETDIR := $(GENDIR)/$(CURDIR)
 BOOTOBJ   := $(TARGETDIR)/entry.o $(TARGETDIR)/usermode.o $(TARGETDIR)/boot.o \
-             $(TARGETDIR)/console.o $(TARGETDIR)/selftest.o
+             $(TARGETDIR)/console.o $(TARGETDIR)/selftest.o \
+             $(TARGETDIR)/diag.o $(TARGETDIR)/romboot.o
 BOOTELF   := $(AROSDIR)/aros-emu68-m68k.elf
 BOOTMAP   := $(GENDIR)/boot/aros-emu68-m68k.elf.map
 COREPUBLIC := $(KOBJSDIR)/kernel_resource.o $(KOBJSDIR)/exec_library.o
@@ -26,7 +27,7 @@ COREOBJS  := $(COREPUBLIC) $(CORELOCAL)
 CORELIBS  := -L$(AROS_LIB) -larossupport -lautoinit -llibinit -lamiga \
              -lstdc.static -lgcc
 
-USER_CPPFLAGS := -D__EMU68__
+USER_CPPFLAGS := -D__EMU68__ -DADATE="\"$(shell date "+%d.%m.%Y")\""
 USER_CFLAGS   := $(CFLAGS_NO_BUILTIN) -fno-common
 USER_INCLUDES := -I$(SRCDIR)/rom/kernel -I$(SRCDIR)/rom/exec \
     -I$(SRCDIR)/arch/m68k-emu68/platform

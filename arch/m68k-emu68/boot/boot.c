@@ -101,6 +101,10 @@ static void emu68_configure_expansion(void)
     CloseLibrary(ExpansionBase);
 
     emu68_console_puts("[AROS/Emu68] Zorro bus configured\n");
+
+    /* Now run each configured board's DiagPoint, which is what actually
+     * registers the modules it carries. See boot/diag.c. */
+    emu68_diag_callroms();
 }
 
 static void coldstart_user(void)
