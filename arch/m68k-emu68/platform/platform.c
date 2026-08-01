@@ -47,50 +47,23 @@
  * never reach real silicon.
  */
 /*
- * On a standalone (non-PiStorm) Emu68 the 0xdff09a alias is plain RAM, so
- * arming through it does nothing. Emu68's shadow is an ordinary global in
- * its own image, and the guest sees physical RAM 1:1, so we arm it directly.
- * emu68_bridge.c locates it; see that file for what this costs.
+ * Both halves are ordinary Amiga custom-chip writes. Emu68 traps them and
+ * they never reach silicon -- there is none. This is the same idiom
+ * arch/m68k-amiga/kernel/amiga_irq.c uses against real Paula, which is the
+ * point: nothing here is Emu68-specific.
  */
-static volatile UWORD *g_int_shadow;
+#define CUSTOM_INTENA ((volatile UWORD *)0x00dff09aUL)
+#define CUSTOM_INTREQ ((volatile UWORD *)0x00dff09cUL)
 
 static inline void emu68_exter_enable(void)
 {
-    if (!g_int_shadow)
-        return;
-
-    /*
-     * Emu68's fast path tests (INT_shadow.INTENA & 0x6000) == 0x6000.
-     *
-     * No byte swap here: Emu68 is built big-endian (elf64-bigaarch64), so
-     * its own structures share the guest's byte order. Swapping is only
-     * needed for the little-endian BCM peripherals -- see the drivers under
-     * bcm283x/.
-     */
-    *g_int_shadow = INTF_INTEN | INTF_EXTER;
+    *CUSTOM_INTENA = INTF_SETCLR | INTF_INTEN | INTF_EXTER;
 }
-
-/*
- * Acknowledge via Emu68's JITCTRL2 control register (MOVEC 0x1e0): writing
- * it with JC2F_INT_FROM_ARM (bit 29) clears INTF.ARM. Unlike the INTREQ
- * alias this is not PiStorm-gated. Bits 29-31 are action bits that are not
- * stored, so the low bits are read back and preserved rather than zeroed.
- */
-#define JC2F_INT_FROM_ARM 0x20000000UL
-#define JC2_CONFIG_MASK   0x1fffffffUL
 
 static inline void emu68_exter_ack(void)
 {
-    /* An Emu68-private control register has no MOVEC mnemonic, so both
-     * directions are encoded by hand. The encoding names d0 explicitly, so
-     * the value has to be pinned there rather than left to the allocator. */
-    register ULONG jc2 __asm__("d0");
-
-    __asm__ volatile (".word 0x4e7a, 0x01e0" : "=d" (jc2)); /* JITCTRL2 -> d0 */
-
-    jc2 = (jc2 & JC2_CONFIG_MASK) | JC2F_INT_FROM_ARM;
-
-    __asm__ volatile (".word 0x4e7b, 0x01e0" :: "d" (jc2)); /* d0 -> JITCTRL2 */
+    /* SET/CLR clear -> clear EXTER, which is what drops the level-6 line. */
+    *CUSTOM_INTREQ = INTF_EXTER;
 }
 
 extern const struct PlatformDriver bcm283x_system_timer_driver;
@@ -336,9 +309,6 @@ BOOL platform_timer_start(const void *fdt, ULONG interval_us)
      * shadow is still clear that is the only one we ever get -- it records
      * ARMPending, skips INTF.ARM, and leaves the CPU deaf.
      */
-    g_int_shadow = (volatile UWORD *)emu68_find_int_shadow();
-    platform_trace_val("[exter] INT_shadow ", (ULONG)g_int_shadow);
-
     emu68_exter_enable();
 
     if (!discover())
@@ -346,8 +316,8 @@ BOOL platform_timer_start(const void *fdt, ULONG interval_us)
 
     vectors[24 + PLATFORM_AUTOVECTOR_LEVEL] = Platform_Autovector_Direct;
 
-    platform_trace_val("[exter] INTENA     ",
-                       g_int_shadow ? *g_int_shadow : 0);
+    /* INTENAR (0xdff01c) reads back the mask Emu68 is holding for us. */
+    platform_trace_val("[exter] INTENAR    ", *(volatile UWORD *)0x00dff01cUL);
 
     g_timer_ops->SetPeriod(interval_us);
     g_timer_ops->Start();

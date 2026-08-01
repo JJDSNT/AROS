@@ -121,11 +121,6 @@ static inline void platform_trace_val(const char *label, ULONG value)
 
 #endif /* PLATFORM_TRACE_BRINGUP */
 
-/* Guest-physical address of Emu68's INT_shadow, or 0 if it could not be
- * identified. See emu68_bridge.c -- that file is the only thing in this port
- * that knows about Emu68's internals, and is a proof of concept. */
-ULONG emu68_find_int_shadow(void);
-
 /* Discover the real platform timer and interrupt controller under /soc in
  * `fdt`, wire the level-6 autovector, and start the timer ticking at
  * `interval_us`. Returns FALSE if either device is missing/unrecognised. */
