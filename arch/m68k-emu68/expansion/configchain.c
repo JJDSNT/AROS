@@ -392,7 +392,20 @@ static void findmbram(struct ExpansionBase *ExpansionBase)
 
 static void detectexpram(struct ExpansionBase *ExpansionBase)
 {
-    findmbram(ExpansionBase);
+    /*
+     * findmbram() is not called here.
+     *
+     * On an Amiga it hunts for motherboard RAM that autoconfig does not
+     * report, by writing and reading back candidate addresses with
+     * MemoryTest(). There is no such memory on this machine: every usable
+     * region is described in the device tree and already handed to the
+     * allocator by boot.c, and probing outside it pokes addresses that are
+     * not RAM.
+     *
+     * It stayed harmless only by accident, because it is gated on AFF_68020
+     * and AFF_ADDR32 and this target used to report AttnFlags as zero. Now
+     * that the flags are honest, so is this.
+     */
 
     D(bug("[expansion:am68k] %s: adding ram boards\n", __func__));
 

@@ -409,6 +409,38 @@ static void start_aros(struct Emu68BootContext *ctx)
     sys_base = krnPrepareExecBase(ranges, memory, BootMsg);
     if (sys_base)
     {
+        /*
+         * Tell exec what Emu68 actually emulates.
+         *
+         * Nothing else sets this, so it was left at zero and exec believed it
+         * was running on a bare 68000. That is not a cosmetic mistake: the
+         * size of an exception stack frame depends on it. Emu68 emits frames
+         * with a format word (src/M68k_Exception.c), i.e. 68010 and up, while
+         * Exec_Supervisor_Entry (arch/m68k-all/exec/supervisor.S) pushes that
+         * word only when AFF_68010 is set. With the flag clear, the fake frame
+         * it builds is two bytes short, and the RTE that ends the supervisor
+         * call returns to the wrong address.
+         *
+         * That path is reached whenever Permit() finds a switch pending and
+         * calls KrnSchedule(), which is why it survived the timer/scheduler
+         * selftest: preemption from an interrupt goes through this port's own
+         * trampoline, which pushes and pops symmetrically and never consults
+         * AttnFlags.
+         *
+         * The target is built -march=68040 to match (configure sets
+         * gcc_default_cpu for this arch), so the 68040 variants
+         * m68k_ExecInstallPreserveAll() selects from these flags are built for
+         * the CPU that is actually underneath.
+         *
+         * The FPU is claimed too. Emu68 emulates one, the target is built
+         * against the toolchain's hard-float multilib, and
+         * arch/m68k-all/kernel/fpu{save,restore}context.S already carry the
+         * context handling that goes with saying so.
+         */
+        sys_base->AttnFlags |= AFF_68010 | AFF_68020 | AFF_68030 |
+                               AFF_68040 | AFF_ADDR32 |
+                               AFF_68881 | AFF_68882 | AFF_FPU40;
+
         m68k_ExecInstallPreserveAll(sys_base);
         ctx->exec_base = sys_base;
         ctx->flags |= EMU68_BOOT_EXEC_READY;

@@ -2795,7 +2795,21 @@ spec_obj_format="-m $aros_object_format"
 # as well as floating-point ABI.
 case "$aros_target_cpu" in
     *m68k*)
-        gcc_default_cpu="68000"
+        # Emu68 is always a 68040-class machine with a working FPU, so the
+        # guest may as well be built for one. Other m68k targets default to
+        # 68000 and soft float because they have to run on any Amiga; this one
+        # does not, and building 68000 while the CPU underneath is a 68040
+        # makes AttnFlags and the exception frame format disagree.
+        #
+        # Dropping -msoft-float selects the toolchain's hard-float multilib
+        # (m68040;@mcpu=68040 rather than m68040/softfp), so libgcc and the
+        # static libraries come from the matching set.
+        if test "$aros_target_arch" = "emu68" ; then
+            gcc_default_cpu="68040"
+            m68k_isa_extra="ISA_FLOAT_FLAGS               =""$export_newline""ISA_MC68000_FLAGS             = -march=68000 $""(ISA_FLOAT_FLAGS)"
+        else
+            gcc_default_cpu="68000"
+        fi
         aros_isa_targets="M68K_ISA_TARGETS              :=MC68020 MC68040"
         aros_isa_extra="$aros_isa_extra$export_newline$aros_isa_targets$export_newline"
         aros_isa_extra="$aros_isa_extra$m68k_isa_extra$export_newline$m68k_020_isa_extra$export_newline$m68k_030_isa_extra$export_newline$m68k_040_isa_extra$export_newline$m68k_060_isa_extra$export_newline$m68k_ac080_isa_extra$export_newline"
