@@ -207,6 +207,76 @@ We are not attached to it. Any mechanism that lets a chipsetless guest open
 the gate and complete the cycle would let us delete our instruction
 scanner, which is the only outcome we actually need.
 
+## The `gic400.library` reference, and what it shows
+
+Upstream pointed at [`rondoval/emu68-gic400-library`](https://github.com/rondoval/emu68-gic400-library)
+as the reference for how this should behave. We read it, and we agree with
+it completely — it is exactly the shape we want, and it confirms (b) in
+practice rather than in principle.
+
+What it does: discovers the GIC-400 through the device tree, programs the
+distributor and CPU interface itself, keeps a handler table across the SPI
+range, and acknowledges at the GIC with `GICC_EOIR`. Emu68 is told nothing
+about any of it. Our `bcm283x/interrupt_controller.c` is the same design
+against the older ARMCTRL controller, which is what a Pi 3 has.
+
+The part worth drawing out is how it receives control. It contains **no
+Emu68-specific interrupt code at all** — no `MOVEC`, no firmware structure,
+nothing. The entire hook is one line (`src/gic400_api.c:178`):
+
+```c
+AddIntServer(INTB_EXTER, &gicBase->dispatcher_interrupt);
+```
+
+That is plain AmigaOS exec. It works because Emu68 impersonates Paula
+end to end, in five steps:
+
+1. AmigaOS writes `INTENA` (`0xdff09a`) with `INTEN|EXTER` during normal
+   startup; Emu68 traps it and updates `INT_shadow.INTENA` — the gate opens
+   as a side effect of the guest OS doing ordinary Amiga things.
+2. A host IRQ arrives; the fast path sees the gate open and sets
+   `ARMPending = 1` and `INTF.ARM`, raising level 6.
+3. AmigaOS's level-6 handler reads `INTREQR` (`0xdff01e`); Emu68 traps the
+   read and ORs in `0x2000` (`INTF_EXTER`) when `ARMPending` is set
+   (`vectors.c:671-687`), so the OS concludes Paula raised EXTER and runs
+   the EXTER server chain — which is where the library's dispatcher sits.
+4. The dispatcher reads the GIC, calls the device handler, writes `EOIR`.
+5. AmigaOS writes `INTREQ` to clear EXTER; Emu68 traps it and clears
+   `ARMPending` and `INTF.ARM`.
+
+Steps 1, 3 and 5 are Paula MMIO emulation, and all three live inside
+`#ifdef PISTORM_ANY_MODEL` (`vectors.c:314-784`). `VARIANT=none` — the
+default, and the build we run — has none of them, and on that build the
+`0xdff09a` alias is ordinary RAM.
+
+So the reference confirms the model and simultaneously shows why we cannot
+follow it: **the guest side is portable, but it rides on a Paula that only
+exists in PiStorm builds.** A guest with no Paula has no step 1, no step 3
+and no step 5.
+
+(We also infer, from GIC-400 being Pi 4-class silicon and from the driver
+stack defaulting `EMU68_DEBUG_BACKEND` to `pistorm`, that this stack runs
+on CM4-based PiStorm32 hardware rather than a standalone Pi. That is an
+inference from packaging, not something we verified — but it would explain
+why the Paula dependency has not been hit before.)
+
+### Which makes the ask smaller than it first looked
+
+Read that way, we are not proposing a new mechanism. We are asking for the
+three Paula-impersonating steps to have a Paula-free spelling. `HOSTIRQ` is
+exactly that, one bit per step:
+
+| PiStorm path (impersonating Paula) | Paula-free equivalent |
+|---|---|
+| write `INTENA` `0xdff09a` with `INTEN\|EXTER` | `HOSTIRQ.ENA = 1` |
+| read `INTREQR` `0xdff01e`, EXTER ORed in when `ARMPending` | `HOSTIRQ.PEND` reads 1 |
+| write `INTREQ` `0xdff09c` clearing EXTER | write 1 to `HOSTIRQ.PEND` |
+
+Same state machine, same `INT_shadow` semantics, same level-6 autovector
+contract, same guest-side dispatch shape as `gic400.library`. The only
+thing removed is the requirement that the guest own a Paula in order to
+say those three things.
+
 ## What we think is practical
 
 One new `MOVEC` control register.
@@ -376,7 +446,10 @@ register.
    on their own and are much easier to review in isolation.
 
 4. Is there a non-PiStorm consumer we do not know about whose expectations
-   we would break?
+   we would break? `gic400.library` looked like one, but on reading it we
+   believe it depends on the PiStorm Paula emulation (above) — so if it
+   does run on `VARIANT=none` somewhere, we have misread something
+   important and would like to be corrected early.
 
 ## Summary
 
@@ -388,6 +461,9 @@ vectored delivery.
 Still open, and the only thing we actually need: on a stock build there is
 no supported way for a chipsetless guest to arm level-6 delivery, because
 the gate is Paula's `INTENA` and its only writer is compiled out.
+`gic400.library`, offered as the reference for correct behaviour, is a good
+reference for the guest side and we match it — but it reaches level 6 only
+because Emu68 impersonates Paula for it, which `VARIANT=none` does not do.
 
 Practical answer: one control register with two meaningful bits, pending
 folded into a free `INTF` byte so the JIT's inner-loop poll is unchanged.
