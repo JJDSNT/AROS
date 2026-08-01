@@ -358,11 +358,41 @@ If host interrupts become a supported guest feature, this asymmetry is
 probably worth revisiting — a stock-build guest calling `STOP` is a normal
 idle path, not an edge case.)
 
-Hence the split: **pending goes in a free `INTF` byte** — the union uses
-five of eight (`ARM`, `ARM_err`, `IPL`, `RESET`, `PPC`), and
-`M68kReportInterrupt()` already carries the comment *"we have 8 slots in
-total"* — while **mask and configuration live in the control register**,
-which is only read on the cold path. Hot path touches `INT64` only.
+Hence the split: **pending goes in a free `INTF` byte**, while **mask and
+configuration live in the control register**, which is only read on the
+cold path. The hot path keeps touching `INT64` and nothing else.
+
+The union at `include/M68k.h:164-173` is what makes this free:
+
+```c
+union {
+    struct {
+        uint8_t ARM;        /* +0 */
+        uint8_t ARM_err;    /* +1 */
+        uint8_t IPL;        /* +2 */
+        uint8_t RESET;      /* +3 */
+        uint8_t PPC;        /* +4 */
+    } INTF;
+    uint64_t INT64;
+} __attribute__((aligned(8)));
+```
+
+Five of eight bytes are declared, so offsets +5, +6 and +7 are available,
+and `M68kReportInterrupt()` already carries the comment *"we have 8 slots in
+total"* pointing at exactly them. A new `INTF.HOST` at +5 costs nothing
+measurable: the same `ldr64` and the same `cbz` already read it, because
+`INT64` aliases the whole thing and it is `aligned(8)` so the load stays
+single-access. `ExecutionLoop.c:325` (`if (unlikely(ctx->INT64 != 0))`)
+picks it up with no change at all.
+
+Two incidental notes on that structure:
+
+- `INTF.RESET` is declared but referenced nowhere in the tree. We assume it
+  is reserved rather than dead, and have not proposed using it.
+- Emu68 is built `elf64-bigaarch64`, so `INTF.ARM` is the *most* significant
+  byte of `INT64` and the free slots are the least significant. Irrelevant
+  to a non-zero test, but it does mean `INT64` is not a portable way to
+  express priority, and we have not tried to use it as one.
 
 ### Why one mask bit is enough
 
@@ -449,10 +479,11 @@ register.
 
 ## Open questions
 
-1. Is there already a plan here? The *"we have 8 slots in total"* comment in
-   `M68kReportInterrupt()` reads like the free `INTF` bytes were always
-   intended as an extension point — but that is our reading of a comment,
-   and we would rather ask than assume.
+1. Is there already a plan for the free `INTF` slots? The *"we have 8 slots
+   in total"* comment in `M68kReportInterrupt()` reads like they were always
+   intended as an extension point, and `INTF.RESET` is declared but unused,
+   which suggests reservations we cannot see from outside. If `+5` is spoken
+   for, any of the free offsets works equally well for us.
 
 2. Is `MOVEC` the namespace you want extended, or would you prefer this in
    an MMIO window?
