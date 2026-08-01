@@ -147,11 +147,11 @@ what happened here, and why the compare never matched.
 
 ### Interrupt delivery
 
-> **The `INTENA`/`INTREQ` half of this is PiStorm-only.** Level-6 delivery
-> itself works on any build, but the custom-chip registers used to arm and
-> acknowledge it are emulated only on PiStorm variants, so `platform.c`'s
-> current implementation is inert here. See "What is actually missing" under
-> Current status for the state of play and the direction being pursued.
+> **Needs one Emu68 change.** Upstream emulates the `INTENA`/`INTREQ`
+> registers only on PiStorm variants, so on a standalone build the arm and
+> acknowledge below land in ordinary RAM and no interrupt is ever delivered.
+> Extending that emulation to non-PiStorm builds is what makes this work; see
+> "The fix" under Current status, and `doc/host-interrupts.md`.
 
 Dispatch arrives over the m68k level-6 autovector - Emu68's "EXTER" channel
 for a real physical IRQ - rather than an ARM64 vector table entry, so the
@@ -333,8 +333,10 @@ console.
 
 ### Current status
 
-Validated against a clean upstream Emu68 (`michalsc/Emu68`, no local
-patches), built for `raspi64`.
+Built for `raspi64`. Everything below runs against clean upstream Emu68
+(`michalsc/Emu68`) **except interrupt delivery**, which needs the one Emu68
+change described under "The fix" - stock upstream has no path for a host IRQ
+to reach the m68k at all.
 
 Working:
 
@@ -347,9 +349,8 @@ Working:
 - Interrupt controller. `GPUIRQ_ENBL0` bit 3 is unmasked and, once the
   compare latches, `GPUIRQ_PEND0` bit 3 reads pending.
 
-Interrupt delivery: **working, as a proof of concept** - it runs against
-stock firmware with the address discovered at runtime. The mechanism and its
-one deliberate hack are below.
+Interrupt delivery: **working**, over ordinary Amiga custom-chip writes. This
+needs one change on the Emu68 side - see below.
 
 #### What was missing
 
@@ -374,99 +375,99 @@ only because `INTENA` was zero.
 
 So the single missing step is arming that shadow. Nothing else is broken.
 
-#### Why `0xdff09a` is the wrong way to arm it
+#### Why stock Emu68 cannot arm it
 
-The custom-chip register alias only exists on PiStorm builds:
+Arming the shadow means writing `INTENA`, and on a standalone build there is
+no way to do that from the guest:
 
 | Fact | Location |
 |---|---|
 | All `INTENA`/`INTREQ` MMIO emulation sits inside `#ifdef PISTORM_ANY_MODEL` | `vectors.c:314`-`723` |
 | A standalone build is `VARIANT=none`, so that macro is undefined | `CMakeLists.txt:245` |
 | The non-PiStorm `SYSWriteValToAddr` special-cases only `0xdeadbeef`; everything else writes through to a linear alias | `vectors.c:726` |
+| Every writer of `INT_shadow.INTENA` is inside that ifdef | `vectors.c:377,380,660,663,666` |
+| `INTF.IPL` is dead - `GetIPLLevel()` returns 0 | `ExecutionLoop.c:296` |
+| The whole `MOVEC` write surface can only *clear* `INTF.ARM`, never set it | - |
 
-Hence the trace above: writing `0xE000` to `0xdff09a` and reading `0xE000`
-back means the write landed in ordinary RAM. `platform.c`'s current
-arm/acknowledge pair is therefore inert and has never been exercised - it
-implements the PiStorm protocol on a build that does not have it.
+So writing `0xE000` to `0xdff09a` on a stock build lands in ordinary RAM and
+reads back unchanged. This also answers the regression question for any fix:
+nothing can break, because nothing works today.
 
-#### Working approach - proven end to end
+#### The fix: emulate the two registers on non-PiStorm builds
 
-`INT_shadow` is an ordinary Emu68 global, and the guest sees physical RAM
-1:1 - the same flat map that made `0xdff000` plain RAM works in our favour
-here. Arming it directly delivers interrupts on stock firmware:
+The Pi has no Paula, but the *protocol* Emu68 already implements for PiStorm
+is exactly the one needed - a level-6 "EXTER" channel with an arm bit and an
+acknowledge. Rather than invent a second mechanism, the non-PiStorm branch
+gains the same four register cases:
+
+| Emu68 change | File |
+|---|---|
+| Map a faulting page at `0x00dff000` so accesses trap | `src/aarch64/start.c` |
+| `INTENA`/`INTREQ` writes update `INT_shadow` and gate `INTF.ARM` | `src/aarch64/vectors.c` |
+| `INTENAR`/`INTREQR` reads are *served from* the shadow | `src/aarch64/vectors.c` |
+
+Reads are served rather than snooped, so `INTENAR` reflects what Emu68 is
+actually holding - which is what makes the arming verifiable from the guest.
+
+This lives on `feature/host-irq-abi` in `github.com/JJDSNT/Emu68`
+(commit `4218d21`, on top of upstream `9b4379a5c5`). **Stock upstream
+delivers no interrupts to this port** until that change is merged;
+`doc/host-interrupts.md` in this directory is the write-up for upstream,
+including the alternative (a `MOVEC` control register) and why this option
+was preferred.
+
+#### Guest side
+
+Nothing Emu68-specific. `platform/platform.c` writes the two custom-chip
+registers exactly as `arch/m68k-amiga/kernel/amiga_irq.c` does against real
+Paula:
 
 | Step | Mechanism |
 |---|---|
-| Arm | write `0x6000` into `INT_shadow.INTENA` |
-| Deliver | fast path sets `INTF.ARM = 6` -> loop raises level 6 -> vector at `VBR + 0x78` |
-| Acknowledge | `MOVEC` to `JITCTRL2` with `JC2F_INT_FROM_ARM` (bit 29, `M68k.h:207`) - clears `INTF.ARM`, and is *not* PiStorm-gated |
+| Arm | `*0xdff09a = INTF_SETCLR \| INTF_INTEN \| INTF_EXTER` |
+| Deliver | fast path sets `INTF.ARM` -> loop raises level 6 -> autovector at `VBR + 0x78` |
+| Acknowledge | `*0xdff09c = INTF_EXTER` (SET/CLR clear), once per entry |
 
-Measured under QEMU against an unpatched upstream Emu68:
+Arming happens *before* device discovery: Emu68's fast path masks ARM IRQs on
+return and nothing re-enables them, so an IRQ arriving while the shadow is
+still clear records `ARMPending`, skips `INTF.ARM`, and leaves the CPU deaf
+for good.
 
-```text
-[exter] shadow        0x00006000    arming accepted
-[exter] LEVEL6 entry  0x00000001    m68k took level 6
-[systimer] IRQ tick   0x00000001    AROS handler ran
-[exter] LEVEL6 entry  0x00000002
-[systimer] IRQ tick   0x00000002
-[exter] LEVEL6 entry  0x00000003
-[systimer] IRQ tick   0x00000003
-```
+The acknowledge is mandatory on every entry and is not optional politeness:
+`INTF.ARM` is **not** cleared when the exception is taken
+(`ExecutionLoop.c:387`-`436` pushes the frame and loads PC without touching
+`INTF`), so the line is level-sensitive. Acknowledge after dispatch has
+drained every source, the same ordering `arch/m68k-amiga` uses for a server
+chain.
 
-Ticks 2 and 3 are what prove the acknowledge: without clearing `INTF.ARM`
-the level-6 line stays asserted and the run either storms or stops after
-one entry.
+#### Verified
 
-Two things this settles that earlier revisions of this document got wrong:
-
-- **No byte swap on Emu68's own structures.** Emu68 is built
-  `elf64-bigaarch64` - the ARM runs big-endian, sharing the guest's byte
-  order. Swapping is needed only for the genuinely little-endian BCM
-  peripherals. Writing a byte-swapped `0x0060` into the shadow leaves the
-  gate closed, which is a silent failure.
-- **The `SPSR` IRQ masking in the fast path is not a blocker.** Repeated
-  delivery works in practice; do not design around it.
-
-Still true and load-bearing: `INTF.ARM` is **not** cleared when the exception
-is taken (`ExecutionLoop.c:387`-`436` pushes the frame and loads PC without
-touching `INTF`), so it is level-sensitive and the acknowledge is mandatory
-on every entry.
-
-#### Locating the shadow (`emu68_bridge.c`) - proof of concept
-
-The address is `Emu68 relocation base + link offset of INT_shadow`. The base
-is derivable - Emu68 moves itself to just past the top of guest RAM, which
-the guest reads from the FDT. The offset is not: it is a link-time address
-that moves with every Emu68 build.
-
-Rather than guess it, `platform/emu68_bridge.c` reads it out of the
-instruction stream that uses it. The fast path loads the shadow with an
-`adrp`/`add` pair, so scanning for the three instructions after it and
-decoding the two before gives exactly the address Emu68 itself uses:
+`boot/selftest.c` (a ROMTag at `rt_Pri -49`, `EMU68_SELFTEST`, off by
+default) exercises the whole path from above:
 
 ```text
-adrp x1, <page>         d00015e1
-add  x1, x1, #<lo12>    9102c021
-ldrh w0, [x1]           79400020   <- anchor
-and  w0, w0, #0x6000    12130400
-cmp  w0, #0x6, lsl #12  7140181f
+[AROS/Emu68] platform timer: tick 1 / 2 / 3
+[AROS/Emu68] timer.device clock is advancing
+[AROS/Emu68] timer.device woke the task
+[AROS/Emu68] timer.device elapsed time is coherent
+[AROS/Emu68] simultaneous timer requests completed in order
+[AROS/Emu68] AbortIO cancelled timer request
+[AROS/Emu68] timer/scheduler soak completed successfully
 ```
 
-`adrp` is PC-relative and the guest-physical view differs from Emu68's
-virtual one by a page-aligned constant, so the arithmetic works in physical
-space without needing Emu68's virtual base. The pattern occurs twice - the
-IRQ and FIQ handlers - and both must decode to the same address or the scan
-gives up.
+The soak is the load-bearing part: 120 consecutive one-second requests, each
+checking that both spinning workers advanced. A lost interrupt hangs it, a
+broken acknowledge storms it, and a scheduler that does not preempt starves a
+worker. It runs 120/120.
 
-Confirmed at runtime: discovery returns `0x34c620b0`, the same address that
-was hardcoded while the mechanism was being proven.
+Corroborated independently by `dosboot.resource`'s own retry loop, whose
+`bootDelay()` goes through `timer.device`: 19 retries in 57 seconds, 3.00 s
+each, which is exactly the 150 ticks it asks for.
 
-**This is a proof of concept and is deliberately the only thing in the port
-that knows about Emu68's internals.** It is one file, and nothing outside it
-depends on how the address is obtained - replacing it with something better
-touches nothing else. If upstream rewrites that instruction sequence the
-scan finds nothing and returns 0, and the port runs without interrupts:
-a diagnosable failure rather than a write into a running firmware image.
+One thing earlier revisions of this document got wrong: **there is no byte
+swap on Emu68's own structures.** Emu68 is built `elf64-bigaarch64` - the ARM
+runs big-endian, sharing the guest's byte order. Swapping is needed only for
+the genuinely little-endian BCM peripherals.
 
 Real Raspberry Pi 3 hardware validation remains outstanding.
 
