@@ -20,24 +20,21 @@ CORERESIDENTS := timer_device utility_library oop_library hiddclass_hidd \
                  layers_library keymap_library inputclass_hidd keyboard_hidd \
                  mouse_hidd keyboard_device gameport_device input_device \
                  intuition_library expansion_library partition_library \
-                 FileSystem_resource fat_handler \
+                 mbox_resource sdcard_device FileSystem_resource fat_handler \
                  dos_library dosboot_resource
 
 #
-# Deliberately NOT linked, though still built (see the #MM- lines below):
+# soc/mbox and soc/sdcard drive the same Arasan controller and VideoCore
+# mailbox as Emu68's brcm-sdhc.device and mailbox.resource. Exactly one side
+# may own each: the module names differ, so nothing would clash in the
+# DeviceList to warn us, and both would program the same registers and both
+# call KrnAddIRQHandler(62).
 #
-#   mbox_resource   -- soc/mbox
-#   sdcard_device   -- soc/sdcard, the Arasan backend
+# Ours are linked; the board's modules are kept out by EMU68_EXPANSION_ROM in
+# boot/boot.c. Flip both together.
 #
-# Emu68's expansion ROM carries brcm-sdhc.device and mailbox.resource, which
-# drive the very same Arasan controller and VideoCore mailbox. Nothing stops
-# both sides initialising: the names differ, so no DeviceList clash warns us,
-# and both would end up programming the same registers and both calling
-# KrnAddIRQHandler(62). Exactly one side has to own each piece of hardware.
-#
-# Ours are kept in the tree and one line away. soc/sdcard is still the only
-# path to DMA -- Emu68's device does not do it, and neither does our Arasan
-# backend yet, but its SDHOST sibling in arch/arm-native does.
+# Note the ELF does not relink on a change to this file alone -- delete it to
+# force the link.
 #
 CORELOCAL := $(addprefix $(KOBJSDIR)/,$(addsuffix .emu68.ko,$(CORERESIDENTS)))
 COREOBJS  := $(COREPUBLIC) $(CORELOCAL)

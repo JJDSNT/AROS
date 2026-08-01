@@ -80,9 +80,24 @@ void emu68_set_stage(uint32_t stage)
  * RTF_COLDSTART pass (rom/exec/initcode.c:66), so this has to run before that
  * call rather than from a resident inside it.
  */
+/*
+ * Off while the SD path is being debugged against our own driver.
+ *
+ * Turning this on hands the SD controller and the VideoCore mailbox to
+ * Emu68's brcm-sdhc.device and mailbox.resource, so soc/sdcard and soc/mbox
+ * have to come out of CORERESIDENTS at the same time (see boot/mmakefile.src)
+ * -- otherwise two drivers program the same registers.
+ *
+ * expansion.library still enumerates and maps the board either way; this only
+ * governs whether the modules it carries are ever registered.
+ */
+#define EMU68_EXPANSION_ROM 0
+
 static void emu68_configure_expansion(void)
 {
+#if EMU68_EXPANSION_ROM
     emu68_diag_callroms();
+#endif
 }
 
 static void coldstart_user(void)
