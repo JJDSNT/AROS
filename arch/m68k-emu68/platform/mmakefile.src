@@ -20,7 +20,10 @@ FILES := fdt platform
 
 USER_INCLUDES := $(PRIV_KERNEL_INCLUDES) \
     -I$(GENINCDIR) -I$(AROS_DEVELOPER)/include
-USER_CFLAGS := -Os
+# -fno-common: Emu68's ELF loader refuses to load an image containing a COMMON
+# symbol (src/ElfLoader.c bails on SHN_COMMON), so tentative definitions have
+# to be turned into real ones at compile time. boot/mmakefile.src does the same.
+USER_CFLAGS := -Os -fno-common
 
 %build_archspecific \
   mainmmake=kernel-kernel modname=kernel maindir=rom/kernel arch=emu68-m68k \

@@ -83,6 +83,24 @@ static uint32_t root_address_cells;
 static const struct PlatformIntcOps *g_intc_ops;
 static const struct PlatformTimerOps *g_timer_ops;
 
+/*
+ * Base of the peripheral window as the guest sees it, i.e. the parent address
+ * that /soc's first "ranges" entry maps to. Emu68 places the Pi peripherals
+ * somewhere of its own choosing and rewrites the FDT to match, so this is
+ * discovered rather than assumed.
+ *
+ * Read back through KrnGetSystemAttr(KATTR_PeripheralBase) -- see
+ * kernel/getsystemattr.c. Drivers that live outside this module (sdcard,
+ * mbox) need it and cannot see our statics: every module is linked with
+ * --localize-symbols.
+ *
+ * Explicitly initialised, and this file is built -fno-common: a tentative
+ * definition would land in COMMON, and Emu68's ELF loader rejects the whole
+ * image on the first COMMON symbol it meets (src/ElfLoader.c, SHN_COMMON ->
+ * return 0) rather than allocating for it.
+ */
+ULONG platform_periiobase = 0;
+
 static int str_eq(const char *a, const char *b)
 {
     while (*a && *a == *b)
@@ -172,6 +190,23 @@ static BOOL soc_translate(uint32_t child_addr, ULONG *out)
     return FALSE;
 }
 
+/* Parent address of /soc's first "ranges" entry: where the peripheral window
+ * starts as far as the guest is concerned. Falls back to leaving *out alone
+ * if /soc has no usable "ranges", in which case addresses are identity-mapped
+ * and there is no single base to report. */
+static void soc_periiobase(ULONG *out)
+{
+    of_property_t *ranges = dt_find_property(soc_node, "ranges");
+    uint32_t entry_cells = soc_address_cells + root_address_cells + soc_size_cells;
+
+    if (!ranges || entry_cells == 0 ||
+        ranges->op_length < entry_cells * sizeof(uint32_t))
+        return;
+
+    *out = cells_to_u32((const uint32_t *)ranges->op_value + soc_address_cells,
+                        root_address_cells);
+}
+
 static BOOL node_reg(of_node_t *node, struct PlatformNode *out)
 {
     of_property_t *reg = dt_find_property(node, "reg");
@@ -223,6 +258,8 @@ static BOOL discover(void)
     soc_address_cells = dt_prop_u32_default(soc_node, "#address-cells", 1);
     soc_size_cells = dt_prop_u32_default(soc_node, "#size-cells", 1);
     root_address_cells = dt_prop_u32_default(dt_find_node("/"), "#address-cells", 1);
+
+    soc_periiobase(&platform_periiobase);
 
     ForeachNode((struct List *)&soc_node->on_children, child)
     {
@@ -318,6 +355,7 @@ BOOL platform_timer_start(const void *fdt, ULONG interval_us)
 
     /* INTENAR (0xdff01c) reads back the mask Emu68 is holding for us. */
     platform_trace_val("[exter] INTENAR    ", *(volatile UWORD *)0x00dff01cUL);
+    platform_trace_val("[soc] periiobase   ", platform_periiobase);
 
     g_timer_ops->SetPeriod(interval_us);
     g_timer_ops->Start();
