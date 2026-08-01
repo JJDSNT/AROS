@@ -111,10 +111,9 @@ from Paula via PiStorm. Sensible for the machine it was written for.
 
 ## Two pre-existing defects
 
-These are independent of any ABI decision, and we mention them because we
-believe they are real bugs worth fixing on their own. We are happy to send
-them as separate, small PRs regardless of what happens to the rest of this
-document.
+These are independent of any ABI decision — one is a live bug, the other
+latent. We are happy to send them as separate, small PRs regardless of what
+happens to the rest of this document.
 
 ### `JITCTRL2` bit 29 does not read back for fast-path interrupts
 
@@ -129,18 +128,22 @@ truthiness. But a guest that asks "is a host interrupt pending?" via
 is, for essentially all of them. Storing `1` instead of `6` in the two
 assembly handlers would fix it; the value is never used as a level.
 
-### The two delivery paths have different gating policies
+### The core-0 branch of `IRQHandler()` is unreachable
 
-`curr_el_spx_irq` (an IRQ taken while executing JIT-translated code) honours
-the `INTENA` gate. `IRQHandler()`'s core-0 branch (`vectors.c:2462-2471`,
-reached from the SP0 vectors when the IRQ lands while Emu68 is in its own C
-code) calls `M68kReportInterrupt(1)` with **no gate at all**.
+`IRQHandler()` has a `cpu_id == 0` branch (`vectors.c:2462-2471`) that
+acknowledges the GIC and calls `M68kReportInterrupt(1)` with no `INTENA`
+gate. It cannot execute.
 
-The same physical interrupt line therefore has two different masking
-semantics depending on where the CPU happened to be. Under PiStorm the
-window is small and the guest usually has `INTENA` open anyway, so we would
-not expect anyone to have noticed. For a guest whose mask is genuinely
-closed during early boot, it is a real hazard.
+`IRQHandler` is called from exactly one site, `IRQonOtherCores`
+(`vectors.c:275`), which is reached only from the `curr_el_spx_irq` and
+`curr_el_spx_fiq` fast paths after `tst x0, #3` / `b.ne` — cores 1 to 3.
+Core 0 is handled inline and `eret`s without ever branching there. The SP0
+vectors go to `SYSHandler`, not `IRQHandler`.
+
+Minor, but worth recording: it is the one piece of code that reads like an
+ungated delivery path, and it would become a real inconsistency the moment
+anything routes a core-0 interrupt through it, since it would bypass the
+gate the fast path enforces two instructions from the same decision.
 
 ## The design question that determines everything else: who decodes?
 
@@ -191,8 +194,9 @@ currently met** — and specifically not the first clause.
 "CPU reports interrupt by entering interrupt servicing routine" is exactly
 what does not happen. The interrupt arrives, Emu68 takes the exception, and
 the level-6 autovector is never entered, because the fast path gates it on
-`INT_shadow.INTENA & 0x6000` and the only writer of that field is compiled
-out unless `PISTORM_ANY_MODEL` is defined. We verified the interrupt truly
+`INT_shadow.INTENA & 0x6000`, and all five writers of that field are
+compiled out unless `PISTORM_ANY_MODEL` is defined. We verified the
+interrupt truly
 arrives by observing `ARMPending == 1`, stored unconditionally two
 instructions before the gate.
 
@@ -254,11 +258,23 @@ follow it: **the guest side is portable, but it rides on a Paula that only
 exists in PiStorm builds.** A guest with no Paula has no step 1, no step 3
 and no step 5.
 
-(We also infer, from GIC-400 being Pi 4-class silicon and from the driver
-stack defaulting `EMU68_DEBUG_BACKEND` to `pistorm`, that this stack runs
-on CM4-based PiStorm32 hardware rather than a standalone Pi. That is an
-inference from packaging, not something we verified — but it would explain
-why the Paula dependency has not been hit before.)
+This is not an inference about how the library is deployed. It follows from
+the fact that on `VARIANT=none` **`INT_shadow.INTENA` has no writer at
+all**. Every assignment to it in the tree is inside the PiStorm block:
+
+```
+src/aarch64/vectors.c:377   INT_shadow.INTENA |= value & 0x7fff;
+src/aarch64/vectors.c:380   INT_shadow.INTENA &= ~(value & 0x7fff);
+src/aarch64/vectors.c:660   INT_shadow.INTENA = *value;
+src/aarch64/vectors.c:663   INT_shadow.INTENA = (INT_shadow.INTENA & 0xff00) | ...
+src/aarch64/vectors.c:666   INT_shadow.INTENA = (INT_shadow.INTENA & 0x00ff) | ...
+```
+
+against `#ifdef PISTORM_ANY_MODEL` at `:314` and its `#else` at `:724`. On a
+stock build the field is zero from reset and stays zero, the `and`/`cmp`
+against `0x6000` can never match, and `INTF.ARM` is never set from the fast
+path. The gate is not merely closed by default — there is no code path in
+the firmware that can open it.
 
 ### Which makes the ask smaller than it first looked
 
@@ -445,11 +461,11 @@ register.
    separately and first? We lean towards separately and first — they stand
    on their own and are much easier to review in isolation.
 
-4. Is there a non-PiStorm consumer we do not know about whose expectations
-   we would break? `gic400.library` looked like one, but on reading it we
-   believe it depends on the PiStorm Paula emulation (above) — so if it
-   does run on `VARIANT=none` somewhere, we have misread something
-   important and would like to be corrected early.
+4. ~~Is there a non-PiStorm consumer whose expectations we would break?~~
+   **Answered, in the code: no, there cannot be.** Since `INT_shadow.INTENA`
+   has no writer outside `PISTORM_ANY_MODEL`, no guest on a stock build is
+   receiving host interrupts today — there is no mechanism by which it
+   could be. Adding one therefore has no existing behaviour to preserve.
 
 ## Summary
 
@@ -464,6 +480,10 @@ the gate is Paula's `INTENA` and its only writer is compiled out.
 `gic400.library`, offered as the reference for correct behaviour, is a good
 reference for the guest side and we match it — but it reaches level 6 only
 because Emu68 impersonates Paula for it, which `VARIANT=none` does not do.
+
+This also means nothing can regress: with no writer for `INT_shadow.INTENA`
+outside `PISTORM_ANY_MODEL`, no stock-build guest receives host interrupts
+today, so there is no existing behaviour for a new mechanism to break.
 
 Practical answer: one control register with two meaningful bits, pending
 folded into a free `INTF` byte so the JIT's inner-loop poll is unchanged.
