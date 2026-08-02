@@ -8,6 +8,7 @@
 
 #define __EXEC_NOLIBBASE__
 
+#define DEBUG 1
 #include <aros/debug.h>
 
 #include <dos/dos.h>

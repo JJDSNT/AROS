@@ -6,6 +6,7 @@
 
 #include <aros/config.h>
 
+#define DEBUG 1
 #include <aros/asmcall.h>
 #include <aros/debug.h>
 #include <aros/symbolsets.h>
