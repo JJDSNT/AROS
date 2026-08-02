@@ -4,6 +4,7 @@
     Desc:
 */
 
+#define DEBUG 1
 #include <aros/debug.h>
 #include <exec/resident.h>
 #include <proto/exec.h>

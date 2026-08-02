@@ -4,6 +4,7 @@
     Desc:
 */
 
+#define DEBUG 1
 #include <aros/debug.h>
 #include <utility/tagitem.h>
 #include <dos/dostags.h>

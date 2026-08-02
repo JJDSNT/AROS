@@ -337,6 +337,15 @@ module's source and rebuild - its `D(bug(...))` calls reach the same serial
 channel. That is how `dosboot.resource` was confirmed to be sitting in its
 retry loop rather than stuck.
 
+> **Instrumentation currently left switched on -- revert before this branch
+> is finished.** Four files under `rom/dos` carry a `#define DEBUG 1` that
+> does not belong there: `boot.c`, `cliinit.c`, `shell_helper.c` and
+> `systemtaglist.c`. They are what makes the mount, the `SYS:` assign, the
+> `LoadSeg()` off the card and the Shell startup visible, and the boot is
+> still being brought up against them. They went in as one commit of their
+> own, titled `TEMPORARY`, so `git revert` of that commit is the whole
+> cleanup -- no hand editing.
+
 Read memory as **bytes** (`xp /4bx`), not words. The word view renders the
 byte order in a way that is easy to misread on a little-endian peripheral,
 which is exactly how the byte-order bug above stayed hidden for a while.

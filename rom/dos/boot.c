@@ -4,6 +4,7 @@
     Desc: Implements AROS's generic/amiga-like boot sequence.
 */
 
+#define DEBUG 1
 #include <aros/debug.h>
 #include <exec/alerts.h>
 #include <exec/libraries.h>
