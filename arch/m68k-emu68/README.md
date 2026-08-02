@@ -238,6 +238,35 @@ The build also downloads Raspberry Pi DTBs into `build/firmware/`, so
 `bcm2710-rpi-3-b.dtb` comes from the same tree. (The toolchain file pins
 GCC 14; with GCC 13 installed, copy it and adjust the two compiler lines.)
 
+### Boot media
+
+`dosboot` needs something to mount. Build an SD image with an MBR partition
+table and a single FAT32 partition holding the distribution tree that
+`make` leaves in `bin/emu68-m68k/AROS`:
+
+```sh
+SD=sd.img
+DIST=bin/emu68-m68k/AROS
+truncate -s 256M $SD
+sfdisk $SD <<'EOF'
+label: dos
+unit: sectors
+start=2048, type=c, bootable
+EOF
+mformat -i $SD@@1M -F -v AROS -T 522240 ::
+mcopy -i $SD@@1M -s -Q $DIST/{C,S,Libs,Devs,L,Classes,Fonts,System,Prefs,Storage,Utilities,Tools} ::
+mcopy -i $SD@@1M $DIST/AROS.boot ::
+```
+
+`@@1M` is the mtools offset to the partition at LBA 2048; `type=c` is FAT32
+LBA, which is what `partition.library`'s MBR handler reports as the
+`0x46415402` (`FAT\2`) DOSType that `fat-handler` claims. The unit AROS ends
+up with is `SDCARD0P0:`.
+
+Pass it to QEMU with `-sd sd.img`. QEMU's `raspi3b` wires the file to the same
+Arasan controller `soc/sdcard` drives, so this is the one piece of the boot
+path that is not a stand-in for real hardware.
+
 Then run:
 
 ```sh
