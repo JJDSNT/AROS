@@ -339,6 +339,20 @@ BOOL FNAME_SDCBUS(RegisterUnit)(struct sdcard_Bus *bus)
             {
                 if ((sdcUnit = AllocVecPooled(LIBBASE->sdcard_MemPool, sizeof(struct sdcard_Unit))) != NULL)
                 {
+                    /*
+                     * cmd_AddChangeInt() does AddHead(&unit->sdcu_SoftList),
+                     * so the list has to be a list first. rom/devs/ata, which
+                     * this driver is derived from, does the same for the
+                     * identically named and identically commented au_SoftList
+                     * in ata_unitclass.c:88; the call was lost on the way over.
+                     *
+                     * On a zeroed list AddHead() writes the node through a
+                     * NULL lh_Head, i.e. to address 4 -- harmless-looking on
+                     * the ARM ports that have used this driver so far, and
+                     * fatal on m68k, where address 4 is AbsExecBase.
+                     */
+                    NEWLIST(&sdcUnit->sdcu_SoftList);
+
                     sdcUnit->sdcu_Bus = bus;
                     if ((sdcUnit->sdcu_UnitNum = bus->sdcb_BusUnits->sdcbu_UnitCnt++) > bus->sdcb_BusUnits->sdcbu_UnitMax)
                     {
