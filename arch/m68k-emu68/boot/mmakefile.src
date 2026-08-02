@@ -27,13 +27,22 @@ COREPUBLIC := $(KOBJSDIR)/kernel_resource.o $(KOBJSDIR)/exec_library.o
 # distribution does not ship that file -- it ships L:UserShell-Seg -- so the
 # boot Shell never starts and __dos_Boot() stops at "initialising CLI".
 #
+# task_resource backs AllocTaskStorageSlot()/SetTaskStorageSlot(). genmodule
+# emits an OpenResource("task.resource") into the InitLib of every module
+# built with `options peropenerbase` -- stdc.library is one -- and returns
+# NULL from it when the resource is absent. The symptom is not a missing
+# resource but "Could not open version 0 or higher of library "stdc.library""
+# from FixFonts, IPrefs and Wanderer, i.e. no desktop. arch/m68k-amiga has it
+# in its KRSRCS for the same reason.
+#
 # battclock.resource is the one item of that minimal BSP still missing: it
 # needs a machine backend and this target has no battery-backed clock to
 # write one against.
 #
 CORERESIDENTS := timer_device utility_library oop_library hiddclass_hidd \
                  bootloader_resource aros_library debug_library \
-                 processor_resource gfx_hidd emu68gfx_hidd graphics_library \
+                 processor_resource task_resource \
+                 gfx_hidd emu68gfx_hidd graphics_library \
                  layers_library keymap_library inputclass_hidd keyboard_hidd \
                  mouse_hidd keyboard_device gameport_device input_device \
                  console_device intuition_library expansion_library \
@@ -66,8 +75,8 @@ USER_INCLUDES := -I$(SRCDIR)/rom/kernel -I$(SRCDIR)/rom/exec \
     -I$(SRCDIR)/arch/m68k-emu68/platform \
     -I$(SRCDIR)/arch/m68k-all/kernel
 
-#MM- kernel-link-emu68-m68k : kernel-kernel-kobj kernel-exec-kobj kernel-timer-kobj kernel-utility-kobj kernel-oop-kobj kernel-hidd-kobj kernel-bootloader-kobj kernel-hidd-gfx-kobj kernel-m68k-emu68-emu68gfx-kobj kernel-graphics-kobj kernel-layers-kobj kernel-keymap-kobj kernel-hidd-input-kobj kernel-hidd-kbd-kobj kernel-hidd-mouse-kobj kernel-keyboard-kobj kernel-gameport-kobj kernel-input-kobj kernel-intuition-kobj kernel-expansion-kobj kernel-partition-kobj kernel-mbox-emu68-kobj kernel-sdcard-kobj kernel-filesystem-kobj kernel-fs-fat-kobj kernel-dos-kobj kernel-aros-kobj kernel-debug-kobj kernel-processor-kobj kernel-console-kobj kernel-lddemon-kobj kernel-fs-ram-kobj kernel-fs-con-kobj kernel-shell-kobj kernel-shellcommands-kobj kernel-dosboot-kobj
-#MM- kernel-link-emu68-m68k-quick : kernel-kernel-kobj-quick kernel-exec-kobj-quick kernel-timer-kobj-quick kernel-utility-kobj-quick kernel-oop-kobj-quick kernel-hidd-kobj-quick kernel-bootloader-kobj-quick kernel-hidd-gfx-kobj-quick kernel-m68k-emu68-emu68gfx-kobj-quick kernel-graphics-kobj-quick kernel-layers-kobj-quick kernel-keymap-kobj-quick kernel-hidd-input-kobj-quick kernel-hidd-kbd-kobj-quick kernel-hidd-mouse-kobj-quick kernel-keyboard-kobj-quick kernel-gameport-kobj-quick kernel-input-kobj-quick kernel-intuition-kobj-quick kernel-expansion-kobj-quick kernel-partition-kobj-quick kernel-mbox-emu68-kobj-quick kernel-sdcard-kobj-quick kernel-filesystem-kobj-quick kernel-fs-fat-kobj-quick kernel-dos-kobj-quick kernel-aros-kobj-quick kernel-debug-kobj-quick kernel-processor-kobj-quick kernel-console-kobj-quick kernel-lddemon-kobj-quick kernel-fs-ram-kobj-quick kernel-fs-con-kobj-quick kernel-shell-kobj-quick kernel-shellcommands-kobj-quick kernel-dosboot-kobj-quick
+#MM- kernel-link-emu68-m68k : kernel-kernel-kobj kernel-exec-kobj kernel-timer-kobj kernel-utility-kobj kernel-oop-kobj kernel-hidd-kobj kernel-bootloader-kobj kernel-hidd-gfx-kobj kernel-m68k-emu68-emu68gfx-kobj kernel-graphics-kobj kernel-layers-kobj kernel-keymap-kobj kernel-hidd-input-kobj kernel-hidd-kbd-kobj kernel-hidd-mouse-kobj kernel-keyboard-kobj kernel-gameport-kobj kernel-input-kobj kernel-intuition-kobj kernel-expansion-kobj kernel-partition-kobj kernel-mbox-emu68-kobj kernel-sdcard-kobj kernel-filesystem-kobj kernel-fs-fat-kobj kernel-dos-kobj kernel-aros-kobj kernel-debug-kobj kernel-processor-kobj kernel-task-kobj kernel-console-kobj kernel-lddemon-kobj kernel-fs-ram-kobj kernel-fs-con-kobj kernel-shell-kobj kernel-shellcommands-kobj kernel-dosboot-kobj
+#MM- kernel-link-emu68-m68k-quick : kernel-kernel-kobj-quick kernel-exec-kobj-quick kernel-timer-kobj-quick kernel-utility-kobj-quick kernel-oop-kobj-quick kernel-hidd-kobj-quick kernel-bootloader-kobj-quick kernel-hidd-gfx-kobj-quick kernel-m68k-emu68-emu68gfx-kobj-quick kernel-graphics-kobj-quick kernel-layers-kobj-quick kernel-keymap-kobj-quick kernel-hidd-input-kobj-quick kernel-hidd-kbd-kobj-quick kernel-hidd-mouse-kobj-quick kernel-keyboard-kobj-quick kernel-gameport-kobj-quick kernel-input-kobj-quick kernel-intuition-kobj-quick kernel-expansion-kobj-quick kernel-partition-kobj-quick kernel-mbox-emu68-kobj-quick kernel-sdcard-kobj-quick kernel-filesystem-kobj-quick kernel-fs-fat-kobj-quick kernel-dos-kobj-quick kernel-aros-kobj-quick kernel-debug-kobj-quick kernel-processor-kobj-quick kernel-task-kobj-quick kernel-console-kobj-quick kernel-lddemon-kobj-quick kernel-fs-ram-kobj-quick kernel-fs-con-kobj-quick kernel-shell-kobj-quick kernel-shellcommands-kobj-quick kernel-dosboot-kobj-quick
 #MM kernel-link-emu68-m68k: $(BOOTELF)
 #MM kernel-link-emu68-m68k-quick: $(BOOTELF)
 kernel-link-emu68-m68k: $(BOOTELF)
