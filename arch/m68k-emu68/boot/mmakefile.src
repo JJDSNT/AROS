@@ -16,13 +16,31 @@ COREPUBLIC := $(KOBJSDIR)/kernel_resource.o $(KOBJSDIR)/exec_library.o
 # its ROMTag silently skipped and never initialises. dosboot_resource stays
 # last; new modules go in ahead of it.
 #
+# aros_library through con_handler are the machine-independent BASE package
+# described in boot/modular_kickstart.txt, plus processor_resource from the
+# minimal BSP list in the same file. Without con_handler and console_device
+# dos.library's cliinit() has no CON: to open the boot Shell on, so the boot
+# reaches "leave InitCode(0x04, 0)" and stops there with nothing to say.
+#
+# shell_resource carries the "CLI" segment as a resident. Without it
+# findseg_cli() falls through to LoadSeg("L:Shell-Seg"), and the
+# distribution does not ship that file -- it ships L:UserShell-Seg -- so the
+# boot Shell never starts and __dos_Boot() stops at "initialising CLI".
+#
+# battclock.resource is the one item of that minimal BSP still missing: it
+# needs a machine backend and this target has no battery-backed clock to
+# write one against.
+#
 CORERESIDENTS := timer_device utility_library oop_library hiddclass_hidd \
-                 bootloader_resource gfx_hidd emu68gfx_hidd graphics_library \
+                 bootloader_resource aros_library debug_library \
+                 processor_resource gfx_hidd emu68gfx_hidd graphics_library \
                  layers_library keymap_library inputclass_hidd keyboard_hidd \
                  mouse_hidd keyboard_device gameport_device input_device \
-                 intuition_library expansion_library partition_library \
-                 mbox_resource sdcard_device FileSystem_resource fat_handler \
-                 dos_library dosboot_resource
+                 console_device intuition_library expansion_library \
+                 partition_library mbox_resource sdcard_device \
+                 FileSystem_resource fat_handler lddemon_resource \
+                 ram_handler con_handler shell_resource \
+                 shellcommands_resource dos_library dosboot_resource
 
 #
 # soc/mbox and soc/sdcard drive the same Arasan controller and VideoCore
@@ -48,8 +66,8 @@ USER_INCLUDES := -I$(SRCDIR)/rom/kernel -I$(SRCDIR)/rom/exec \
     -I$(SRCDIR)/arch/m68k-emu68/platform \
     -I$(SRCDIR)/arch/m68k-all/kernel
 
-#MM- kernel-link-emu68-m68k : kernel-kernel-kobj kernel-exec-kobj kernel-timer-kobj kernel-utility-kobj kernel-oop-kobj kernel-hidd-kobj kernel-bootloader-kobj kernel-hidd-gfx-kobj kernel-m68k-emu68-emu68gfx-kobj kernel-graphics-kobj kernel-layers-kobj kernel-keymap-kobj kernel-hidd-input-kobj kernel-hidd-kbd-kobj kernel-hidd-mouse-kobj kernel-keyboard-kobj kernel-gameport-kobj kernel-input-kobj kernel-intuition-kobj kernel-expansion-kobj kernel-partition-kobj kernel-mbox-emu68-kobj kernel-sdcard-kobj kernel-filesystem-kobj kernel-fs-fat-kobj kernel-dos-kobj kernel-dosboot-kobj
-#MM- kernel-link-emu68-m68k-quick : kernel-kernel-kobj-quick kernel-exec-kobj-quick kernel-timer-kobj-quick kernel-utility-kobj-quick kernel-oop-kobj-quick kernel-hidd-kobj-quick kernel-bootloader-kobj-quick kernel-hidd-gfx-kobj-quick kernel-m68k-emu68-emu68gfx-kobj-quick kernel-graphics-kobj-quick kernel-layers-kobj-quick kernel-keymap-kobj-quick kernel-hidd-input-kobj-quick kernel-hidd-kbd-kobj-quick kernel-hidd-mouse-kobj-quick kernel-keyboard-kobj-quick kernel-gameport-kobj-quick kernel-input-kobj-quick kernel-intuition-kobj-quick kernel-expansion-kobj-quick kernel-partition-kobj-quick kernel-mbox-emu68-kobj-quick kernel-sdcard-kobj-quick kernel-filesystem-kobj-quick kernel-fs-fat-kobj-quick kernel-dos-kobj-quick kernel-dosboot-kobj-quick
+#MM- kernel-link-emu68-m68k : kernel-kernel-kobj kernel-exec-kobj kernel-timer-kobj kernel-utility-kobj kernel-oop-kobj kernel-hidd-kobj kernel-bootloader-kobj kernel-hidd-gfx-kobj kernel-m68k-emu68-emu68gfx-kobj kernel-graphics-kobj kernel-layers-kobj kernel-keymap-kobj kernel-hidd-input-kobj kernel-hidd-kbd-kobj kernel-hidd-mouse-kobj kernel-keyboard-kobj kernel-gameport-kobj kernel-input-kobj kernel-intuition-kobj kernel-expansion-kobj kernel-partition-kobj kernel-mbox-emu68-kobj kernel-sdcard-kobj kernel-filesystem-kobj kernel-fs-fat-kobj kernel-dos-kobj kernel-aros-kobj kernel-debug-kobj kernel-processor-kobj kernel-console-kobj kernel-lddemon-kobj kernel-fs-ram-kobj kernel-fs-con-kobj kernel-shell-kobj kernel-shellcommands-kobj kernel-dosboot-kobj
+#MM- kernel-link-emu68-m68k-quick : kernel-kernel-kobj-quick kernel-exec-kobj-quick kernel-timer-kobj-quick kernel-utility-kobj-quick kernel-oop-kobj-quick kernel-hidd-kobj-quick kernel-bootloader-kobj-quick kernel-hidd-gfx-kobj-quick kernel-m68k-emu68-emu68gfx-kobj-quick kernel-graphics-kobj-quick kernel-layers-kobj-quick kernel-keymap-kobj-quick kernel-hidd-input-kobj-quick kernel-hidd-kbd-kobj-quick kernel-hidd-mouse-kobj-quick kernel-keyboard-kobj-quick kernel-gameport-kobj-quick kernel-input-kobj-quick kernel-intuition-kobj-quick kernel-expansion-kobj-quick kernel-partition-kobj-quick kernel-mbox-emu68-kobj-quick kernel-sdcard-kobj-quick kernel-filesystem-kobj-quick kernel-fs-fat-kobj-quick kernel-dos-kobj-quick kernel-aros-kobj-quick kernel-debug-kobj-quick kernel-processor-kobj-quick kernel-console-kobj-quick kernel-lddemon-kobj-quick kernel-fs-ram-kobj-quick kernel-fs-con-kobj-quick kernel-shell-kobj-quick kernel-shellcommands-kobj-quick kernel-dosboot-kobj-quick
 #MM kernel-link-emu68-m68k: $(BOOTELF)
 #MM kernel-link-emu68-m68k-quick: $(BOOTELF)
 kernel-link-emu68-m68k: $(BOOTELF)
