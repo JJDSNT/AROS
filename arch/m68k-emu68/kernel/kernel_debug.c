@@ -43,5 +43,10 @@ static int emu68_kernel_init_end(struct KernelBase *KernelBase)
     return TRUE;
 }
 
-ADD2INITLIB(emu68_kernel_init_begin, 127)
-ADD2INITLIB(emu68_kernel_init_end, -127)
+/*
+ * The INITLIB set is walked from the lowest priority up, so -127 is what runs
+ * first and 127 last -- the opposite of the reading that put "hooks complete"
+ * ahead of "hooks begin" in the boot log.
+ */
+ADD2INITLIB(emu68_kernel_init_begin, -127)
+ADD2INITLIB(emu68_kernel_init_end, 127)
