@@ -254,9 +254,20 @@ unit: sectors
 start=2048, type=c, bootable
 EOF
 mformat -i $SD@@1M -F -v AROS -T 522240 ::
-mcopy -i $SD@@1M -s -Q $DIST/{C,S,Libs,Devs,L,Classes,Fonts,System,Prefs,Storage,Utilities,Tools} ::
+mcopy -i $SD@@1M -s -Q $DIST/{C,S,Libs,Devs,L,Classes,Fonts,System,Prefs,Storage,Utilities,Tools,Locale} ::
 mcopy -i $SD@@1M $DIST/AROS.boot ::
 ```
+
+`Locale` has to be there: `S:Startup-Sequence` does
+`Assign "LOCALE:" "SYS:Locale"`, and without it the boot console opens with
+`Can't find SYS:Locale` (`workbench/c/Assign.c:597`) and every later
+`LOCALE:`-relative assign is built on sand.
+
+Do **not** just copy the whole tree. `Developer` alone is 291 MB of SDK and
+nothing in the boot path reads it; a 512 MB card carrying it currently stalls
+the boot between `AROSMonDrvs` and `preparing console`, which is an open
+problem of its own and not worth walking into while bringing something else
+up.
 
 `@@1M` is the mtools offset to the partition at LBA 2048; `type=c` is FAT32
 LBA, which is what `partition.library`'s MBR handler reports as the
@@ -275,12 +286,34 @@ qemu-system-aarch64 \
   -kernel /path/to/Emu68.raw.img \
   -dtb /path/to/bcm2710-rpi-3-b.dtb \
   -initrd bin/emu68-m68k/AROS/aros-emu68-m68k.elf \
-  -serial stdio -display none -no-reboot \
+  -drive file=sd.img,if=sd,format=raw \
+  -append "nocomposition" \
+  -serial stdio -display gtk -no-reboot \
   -monitor unix:/tmp/emu68-monitor.sock,server,nowait
 ```
 
-Drop `-display none` to get the framebuffer console in a window; the serial
-log keeps coming out on the terminal either way. Close with `Ctrl-A` `X`.
+`-display gtk` puts the framebuffer in a window and the serial log keeps
+coming out on the terminal; close with `Ctrl-A` `X` in the terminal. Use
+`-display none` when only the log matters -- `screendump` on the monitor
+socket still works headless, which is how the desktop below was captured.
+
+`nocomposition` is currently **required** to see anything. Without it
+`DEVS:Monitors/Compositor` installs successfully and then nothing reaches the
+framebuffer: the boot runs to completion, `Wanderer` loads `muimaster.library`
+and its Zune icon classes, and the screen stays on the Emu68 logo. Presumably
+`emu68gfx` is missing whatever the software compositor expects of a display
+driver it has taken over. With the flag, the Workbench screen comes up with
+`RAM Disk` and the boot volume on it.
+
+Reaching that desktop needed two things beyond the display driver itself,
+neither of them obvious from the symptom:
+
+- `task.resource` in the ROM, without which `stdc.library` cannot initialise
+  and `Compositor`, `FixFonts`, `IPrefs` and `Wanderer` all die reporting a
+  library they cannot open.
+- the `CLI_SYSTEM` fix in `rom/dos/newcliproc.c`, without which the first
+  `Execute()` that `AROSMonDrvs` makes never gets its startup packet replied
+  and `__dos_Boot()` deadlocks before opening the console.
 
 Connect to the monitor with:
 
@@ -338,13 +371,24 @@ channel. That is how `dosboot.resource` was confirmed to be sitting in its
 retry loop rather than stuck.
 
 > **Instrumentation currently left switched on -- revert before this branch
-> is finished.** Four files under `rom/dos` carry a `#define DEBUG 1` that
-> does not belong there: `boot.c`, `cliinit.c`, `shell_helper.c` and
-> `systemtaglist.c`. They are what makes the mount, the `SYS:` assign, the
-> `LoadSeg()` off the card and the Shell startup visible, and the boot is
-> still being brought up against them. They went in as one commit of their
-> own, titled `TEMPORARY`, so `git revert` of that commit is the whole
-> cleanup -- no hand editing.
+> is finished.** Seven files outside this target carry a `#define DEBUG 1`
+> that does not belong there:
+>
+> - `rom/dos/boot.c`, `cliinit.c`, `shell_helper.c`, `systemtaglist.c` --
+>   the mount, the `SYS:` assign, the `LoadSeg()` off the card, the Shell
+>   startup.
+> - `rom/dos/newcliproc.c` -- the CliInit packet and the flags it computes.
+> - `rom/lddemon/lddemon.c` -- every disk library load and the result of its
+>   `InitResident()`. This is the only place that separates "file not found"
+>   from "loaded, and `InitResident()` returned NULL", which is what found
+>   the missing `task.resource`.
+> - `workbench/c/Shell/Shell.c` -- each Startup-Sequence line and its return
+>   code.
+>
+> They went in as two commits of their own, both titled `TEMPORARY`, so
+> `git revert` of those two is the whole cleanup -- no hand editing.
+> `arch/m68k-emu68/hidd/emu68gfx/emu68gfx_init.c` also has `DEBUG 1`, but
+> that one is ours and just needs the flag flipped back.
 
 Read memory as **bytes** (`xp /4bx`), not words. The word view renders the
 byte order in a way that is easy to misread on a little-endian peripheral,
