@@ -64,8 +64,21 @@ ULONG internal_CliInitAny(struct DosPacket *dp, APTR DOSBase)
         /* An interactive BCPL Shell-Seg expects zero after CliInit has
          * installed caller-supplied input and output streams.  AROS tags
          * that state for native shells; translate it at the BCPL boundary.
+         *
+         * FNF_SYSTEM is only ever set by the CLI_SYSTEM and CLI_ASYSTEM
+         * arms of the switch below, and CLI_ASYSTEM adds FNF_ASYNCSYSTEM
+         * on top, so the value matched here is reachable from CLI_SYSTEM
+         * and from nothing else.  A synchronous System() must keep its
+         * real flags: AROS_CLI() (dos/cliinit.h:157) only replies the
+         * startup packet when FNF_VALIDFLAGS is set, and with the flags
+         * zeroed it takes the "CliInit already replied for me" branch
+         * instead -- so nobody ever replies and the caller sits in
+         * WaitPkt() forever.  __dos_Boot() hits this on the very first
+         * Execute() that AROSMonDrvs makes, which is why no display
+         * driver is ever loaded on m68k.
          */
-        if ((ULONG)ret == (FNF_VALIDFLAGS | FNF_SYSTEM |
+        if (dp->dp_Type != CLI_SYSTEM &&
+            (ULONG)ret == (FNF_VALIDFLAGS | FNF_SYSTEM |
                            FNF_USERINPUT | FNF_RUNOUTPUT))
             ret = 0;
         if (ret > 0) {
