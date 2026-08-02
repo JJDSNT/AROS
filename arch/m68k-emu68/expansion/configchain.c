@@ -476,7 +476,7 @@ static void detectexpram(struct ExpansionBase *ExpansionBase)
  * expansion_init.c calls this during RTF_SINGLETASK and a hang here stops the
  * boot before almost anything else has run.
  */
-#define EMU68_AUTOCONFIG 1
+#define EMU68_AUTOCONFIG 0
 
 AROS_LH1(void, ConfigChain,
         AROS_LHA(APTR, baseAddr, A0),
