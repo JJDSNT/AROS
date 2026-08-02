@@ -3,7 +3,8 @@ include $(SRCDIR)/config/aros.cfg
 TARGETDIR := $(GENDIR)/$(CURDIR)
 BOOTOBJ   := $(TARGETDIR)/entry.o $(TARGETDIR)/usermode.o $(TARGETDIR)/boot.o \
              $(TARGETDIR)/console.o $(TARGETDIR)/selftest.o \
-             $(TARGETDIR)/diag.o $(TARGETDIR)/romboot.o
+             $(TARGETDIR)/diag.o $(TARGETDIR)/romboot.o \
+             $(TARGETDIR)/superstack_swap.o $(TARGETDIR)/trapprobe.o
 BOOTELF   := $(AROSDIR)/aros-emu68-m68k.elf
 BOOTMAP   := $(GENDIR)/boot/aros-emu68-m68k.elf.map
 COREPUBLIC := $(KOBJSDIR)/kernel_resource.o $(KOBJSDIR)/exec_library.o
@@ -44,7 +45,8 @@ CORELIBS  := -L$(AROS_LIB) -larossupport -lautoinit -llibinit -lamiga \
 USER_CPPFLAGS := -D__EMU68__ -DADATE="\"$(shell date "+%d.%m.%Y")\""
 USER_CFLAGS   := $(CFLAGS_NO_BUILTIN) -fno-common
 USER_INCLUDES := -I$(SRCDIR)/rom/kernel -I$(SRCDIR)/rom/exec \
-    -I$(SRCDIR)/arch/m68k-emu68/platform
+    -I$(SRCDIR)/arch/m68k-emu68/platform \
+    -I$(SRCDIR)/arch/m68k-all/kernel
 
 #MM- kernel-link-emu68-m68k : kernel-kernel-kobj kernel-exec-kobj kernel-timer-kobj kernel-utility-kobj kernel-oop-kobj kernel-hidd-kobj kernel-bootloader-kobj kernel-hidd-gfx-kobj kernel-m68k-emu68-emu68gfx-kobj kernel-graphics-kobj kernel-layers-kobj kernel-keymap-kobj kernel-hidd-input-kobj kernel-hidd-kbd-kobj kernel-hidd-mouse-kobj kernel-keyboard-kobj kernel-gameport-kobj kernel-input-kobj kernel-intuition-kobj kernel-expansion-kobj kernel-partition-kobj kernel-mbox-emu68-kobj kernel-sdcard-kobj kernel-filesystem-kobj kernel-fs-fat-kobj kernel-dos-kobj kernel-dosboot-kobj
 #MM- kernel-link-emu68-m68k-quick : kernel-kernel-kobj-quick kernel-exec-kobj-quick kernel-timer-kobj-quick kernel-utility-kobj-quick kernel-oop-kobj-quick kernel-hidd-kobj-quick kernel-bootloader-kobj-quick kernel-hidd-gfx-kobj-quick kernel-m68k-emu68-emu68gfx-kobj-quick kernel-graphics-kobj-quick kernel-layers-kobj-quick kernel-keymap-kobj-quick kernel-hidd-input-kobj-quick kernel-hidd-kbd-kobj-quick kernel-hidd-mouse-kobj-quick kernel-keyboard-kobj-quick kernel-gameport-kobj-quick kernel-input-kobj-quick kernel-intuition-kobj-quick kernel-expansion-kobj-quick kernel-partition-kobj-quick kernel-mbox-emu68-kobj-quick kernel-sdcard-kobj-quick kernel-filesystem-kobj-quick kernel-fs-fat-kobj-quick kernel-dos-kobj-quick kernel-dosboot-kobj-quick
@@ -68,9 +70,14 @@ $(KOBJSDIR)/%.emu68.ko: $(KOBJSDIR)/%.o
 	$(Q)$(NM_PLAIN) --defined-only $< | cut -d' ' -f3 >$@.sym
 	$(Q)$(OBJCOPY) --localize-symbols $@.sym $< $@
 
+#
+# aros/m68k/asm.h -- which superstack_swap.S needs for the SysBase struct
+# offsets -- is generated, so it only exists under $(GENINCDIR). This is the
+# same pair of flags arch/m68k-amiga/boot/mmakefile.src:267 uses.
+#
 $(TARGETDIR)/%.o: %.S
 	@$(MKDIR) $(@D)
-	%compile_q cmd="$(KERNEL_CC)" opt="$(strip $(AFLAGS) $(TARGET_CFLAGS) $(CPPFLAGS))"
+	%compile_q cmd="$(KERNEL_CC)" opt="$(strip $(AFLAGS) $(TARGET_CFLAGS) $(CPPFLAGS) -I$(AROS_DEVELOPER)/include -I$(GENINCDIR))"
 
 $(TARGETDIR)/%.o: %.c
 	@$(MKDIR) $(@D)

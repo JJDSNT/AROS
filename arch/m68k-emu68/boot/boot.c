@@ -16,6 +16,7 @@
 
 #include "kernel_base.h"
 #include "kernel_romtags.h"
+#include "m68k_exception.h"
 #include "platform.h"
 
 #define FDT_MAGIC       0xd00dfeedUL
@@ -48,6 +49,13 @@ extern void Exec_Supervisor_Trap(void);
 extern void emu68_enter_user(void (*entry)(void), void *stack)
     __attribute__((noreturn));
 extern void m68k_ExecInstallPreserveAll(struct ExecBase *SysBase);
+extern void SuperstackSwap(void);
+
+/* arch/m68k-amiga/boot/start.c uses the same 8KB. */
+#define SS_STACK_SIZE   0x2000
+
+/* boot/trapprobe.c -- bring-up instrumentation, compiles to an empty table. */
+extern const struct M68KException emu68_exception_table[];
 
 static struct TagItem emu68_boot_tags[9];
 
@@ -104,6 +112,7 @@ static void coldstart_user(void)
 {
     struct Emu68BootContext *ctx = &emu68_boot_context;
     ULONG timer_interval_us;
+    APTR ss_stack;
 
     emu68_set_stage(EMU68_STAGE_COLDSTART);
     emu68_console_puts("[AROS/Emu68] InitCode COLDSTART in user mode\n");
@@ -123,6 +132,33 @@ static void coldstart_user(void)
         emu68_console_puts("[AROS/Emu68] platform timer not found\n");
 
     emu68_configure_expansion();
+
+    /*
+     * Move off the supervisor stack Emu68 gave us and onto one Exec owns.
+     *
+     * arch/m68k-amiga/boot/start.c does this in doInitCode(), in user mode,
+     * immediately before InitCode(RTF_COLDSTART) -- so this is the same point
+     * in the same boot phase. Until it happens, every trap into supervisor
+     * (Exec/Supervisor(), and therefore the scheduler's KrnSchedule() path)
+     * is pushing onto whatever the bootstrap left in SSP, of unknown size and
+     * unknown ownership.
+     *
+     * MEMF_REVERSE keeps it out of the way of the low allocations the rest of
+     * the boot makes. Amiga page-aligns it for its MMU tables; we have no MMU
+     * of our own to protect it with, so alignment buys nothing here.
+     */
+    ss_stack = AllocMem(SS_STACK_SIZE, MEMF_ANY | MEMF_CLEAR | MEMF_REVERSE);
+    if (ss_stack)
+    {
+        SysBase->SysStkLower = ss_stack;
+        SysBase->SysStkUpper = (UBYTE *)ss_stack + SS_STACK_SIZE;
+        Supervisor((ULONG_FUNC)SuperstackSwap);
+        emu68_console_puts("[AROS/Emu68] supervisor stack swapped\n");
+    }
+    else
+    {
+        emu68_console_puts("[AROS/Emu68] supervisor stack alloc failed\n");
+    }
 
     /*
      * This does not return, and every other AROS target relies on that:
@@ -453,6 +489,30 @@ static void start_aros(struct Emu68BootContext *ctx)
         ctx->flags |= EMU68_BOOT_KERNEL_READY;
         emu68_set_stage(EMU68_STAGE_KERNEL_READY);
         emu68_console_puts("[AROS/Emu68] kernel.resource ready\n");
+
+        /*
+         * Populate the m68k exception vectors.
+         *
+         * Until this runs, the only two vectors this port has ever written
+         * are 8 (below) and 30 (level 6, from platform_timer_start()). Every
+         * other vector holds whatever Emu68 left there. Any exception AROS
+         * raises -- an illegal instruction, a trap, a divide by zero, an
+         * unclaimed autovector -- then jumps to an address that was never a
+         * function, and Emu68's JIT starts translating whatever it finds,
+         * typically the vector table itself.
+         *
+         * M68KExceptionInit() points vectors 2..63 at M68KTrapHelper_10,
+         * which routes into AROS's normal exception handling. The table
+         * argument is only for per-vector overrides. arch/m68k-amiga uses it
+         * for its seven autovector levels; we cover those the other way
+         * arch/m68k-amiga also does, writing all seven vectors directly in
+         * platform.c, so ours carries the fault vectors instead.
+         *
+         * Ordering matters and mirrors arch/m68k-amiga/boot/start.c:1026-1030
+         * -- this overwrites vector 8, so Exec_Supervisor_Trap goes back in
+         * afterwards, and level 6 is installed later still.
+         */
+        M68KExceptionInit(emu68_exception_table, sys_base);
 
         ((volatile void **)0)[8] = Exec_Supervisor_Trap;
         user_stack = AllocMem(64 * 1024, MEMF_PUBLIC | MEMF_CLEAR);

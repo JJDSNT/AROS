@@ -351,7 +351,26 @@ BOOL platform_timer_start(const void *fdt, ULONG interval_us)
     if (!discover())
         return FALSE;
 
-    vectors[24 + PLATFORM_AUTOVECTOR_LEVEL] = Platform_Autovector_Direct;
+    /*
+     * All seven autovector levels.
+     *
+     * This is an Amiga, and an Amiga answers every level -- which level a
+     * given interrupt arrives on is decided below us and is not something
+     * this port should be modelling. arch/m68k-amiga/kernel/amiga_irq.c
+     * installs the same seven with its irqVector[0..6]. Wiring only
+     * PLATFORM_AUTOVECTOR_LEVEL would leave six vectors pointing at whatever
+     * the bootstrap left, which is how an unexpected level turns into the
+     * JIT translating the vector table as if it were code.
+     *
+     * They share one trampoline because the dispatch does not depend on the
+     * level: it asks the interrupt controller what is pending and drains it.
+     */
+    {
+        int level;
+
+        for (level = 1; level <= 7; level++)
+            vectors[24 + level] = Platform_Autovector_Direct;
+    }
 
     /* INTENAR (0xdff01c) reads back the mask Emu68 is holding for us. */
     platform_trace_val("[exter] INTENAR    ", *(volatile UWORD *)0x00dff01cUL);
