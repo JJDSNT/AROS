@@ -229,6 +229,10 @@ static void test_program()
               "frame black above the Copper WAIT, red below");
         check(have_desc && first_red + desc.visible_y_start == 0x80,
               "colour changes on the WAIT line ($80)");
+        /* Rigel labels this RGBA8888, but pixels are host u32 0x00RRGGBB;
+           the AROS presenter relies on it */
+        check(top == 0x00000000u && bottom == 0x00ff0000u,
+              "pixels are host-endian 0x00RRGGBB");
         check((frame.flags & RIGEL_FRAME_COPPER_ACTIVE) != 0,
               "frame reports Copper activity");
     }

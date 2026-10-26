@@ -39,7 +39,7 @@ disabled. `m68kemu_rigel.c` supplies AROS allocation callbacks.
 ## Distribution blocker
 
 Rigel currently has no repository `LICENSE` file or other explicit license
-grant. This does not block local technical validation, but it does block safe
+grant (Rigel `ISSUE-0013`). This does not block local technical validation, but it does block safe
 redistribution of Rigel with AROS. The Rigel copyright holder must choose and
 publish a license before this integration can be distributed.
 
@@ -224,6 +224,58 @@ Completion requires this test, the milestone 2 test and all legacy
 non-Rigel host tests to pass, and `kernel-m68kemu-library` to build with
 and without `--enable-m68kemu-rigel`.
 
+## Milestone 4: video presentation
+
+Milestones 1-3 run chipset programs headless; nothing a program draws is
+visible, and `dos.library` still starts Hunk executables without Rigel.
+This milestone shows Rigel's frames in a native AROS window and gives users
+an explicit way to start a program with the chipset and a display.
+
+### Scope
+
+- Add `M68KEMU_RUN_DISPLAY` for `RunHunkEx()`/`RunFileEx()`. It implies
+  `M68KEMU_RUN_RIGEL` and opens no window until the first completed frame.
+- Introduce a presenter hook between the bridge and any display: on each
+  `RIGEL_EVENT_FRAME_READY` the bridge hands the completed frame to the
+  context's presenter, which may ask the program to stop. The hook keeps
+  the frame pump testable without a display.
+- Implement the AROS presenter: a window on the default public screen sized
+  to the frame, `WritePixelArray()` per frame in the pixel layout Rigel
+  actually produces, pacing to the video standard's frame rate with
+  `timer.device`, and stopping the program on the close gadget, Escape or
+  Ctrl-C. A stopped program returns `RETURN_WARN`.
+- Extend `RunM68K` with `RIGEL` and `DISPLAY` switches.
+
+Input (keyboard, mouse, joystick), audio, CIA timers, screen modes beyond
+the frame Rigel composes, and choosing Rigel automatically in `dos.library`
+remain outside this milestone.
+
+### Acceptance test
+
+A focused 68k test program must:
+
+1. Allocate a one-bitplane 320x256 playfield and a Copper list with
+   `MEMF_CHIP`, and draw a 16x16 checkerboard.
+2. Program the display window, data fetch, `BPLCON0` and colours through the
+   Copper, which also reloads the bitplane pointer every frame.
+3. Change `COLOR01` from a `VERTB` server every frame.
+4. Run a fixed number of frames and exit with a deterministic result.
+
+The host test, with a presenter that records frames instead of drawing them,
+must confirm:
+
+- one presented frame per `VERTB`, in increasing frame order;
+- the checkerboard geometry and both colours in a presented frame, and
+  `COLOR01` changing between frames;
+- that a presenter asking to stop ends the program early with `RETURN_WARN`.
+
+On a hosted AROS build, `RunM68K DISPLAY` must show the program in a window
+at the PAL frame rate and close cleanly.
+
+Completion requires this test and the earlier milestone and legacy host
+tests to pass, and `kernel-m68kemu-library` to build with and without
+`--enable-m68kemu-rigel`.
+
 ## Remaining work
 
 - **Remaining Hunk blocks:** the loader handles `HUNK_RELOC32`,
@@ -244,8 +296,11 @@ and without `--enable-m68kemu-rigel`.
   connected yet.
 - **Input, CIA, RTC, disk, and serial:** Rigel has APIs for these domains, but
   the bridge forwards only custom-register space.
-- **Rigel headers:** the public headers have no `extern "C"` guards, so C++
-  callers wrap the include themselves.
-- **Rigel tracing:** the Copper emits a structured `copper_write` trace event
-  for every colour-register write; with stdio logging and no callback it
-  floods stderr.
+- **Rigel-side findings**, recorded in Rigel's own backlog:
+  - `ISSUE-0010`: frames reported as `RGBA8888` hold host-endian
+    `0x00RRGGBB`; `test_rigel_exec_irq` pins the layout the bridge relies on.
+  - `ISSUE-0011`: Copper write tracing is always on for the first 512 writes
+    with a process-wide counter; the bridge installs a discarding
+    `log_event_fn`.
+  - `ISSUE-0012`: the public headers have no `extern "C"` guards, so C++
+    callers wrap the include themselves.
