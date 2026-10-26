@@ -150,6 +150,64 @@ A focused 68k test program must:
 Completion requires this test to pass with Rigel enabled while all legacy
 non-Rigel host tests continue to pass unchanged.
 
+## Milestone 3: Exec interrupt API and Copper
+
+Milestone 2 delivers interrupts only to programs that write an autovector
+directly. Ordinary applications use the Exec API instead, and on a hosted
+build `Disable()`/`Enable()` currently reach the native host Exec. This
+milestone routes the Exec interrupt API to Rigel for contained programs and
+validates Copper DMA through the bridge. It remains headless.
+
+### Scope
+
+- Implement `AddIntServer()`, `RemIntServer()` and `SetIntVector()` for
+  contained 68k `struct Interrupt` nodes. Server chains (`PORTS`, `COPER`,
+  `VERTB`, `EXTER`) are ordered by `ln_Pri`; adding a server enables its
+  `INTENA` bit and removing the last one disables it.
+- Replace the default autovector stubs with contained per-level dispatchers
+  that follow Exec's calling conventions:
+  - servers get `A1 = is_Data`, `A5 = is_Code`, `A0 = custom`,
+    `A6 = SysBase`; a server returning with Z clear ends a non-`VERTB` chain;
+  - handlers get `D1 = INTENAR & INTREQR`, `A0 = custom`, `A1 = is_Data`,
+    `A5 = is_Code`, `A6 = SysBase`, and acknowledge `INTREQ` themselves;
+  - chain interrupts are acknowledged by the dispatcher, and pending bits
+    without a server or handler are acknowledged and dropped.
+- In Rigel mode, `Disable()`/`Enable()` nest on the contained `INTENA`
+  master bit instead of the host, and the master bit starts enabled as on a
+  running AmigaOS.
+- Programs that install an autovector directly keep working.
+- Validate a Copper list running from Chip RAM: `WAIT`, `MOVE` to a colour
+  register, and a Copper-raised `COPER` interrupt.
+
+Software interrupts (`Cause()`), CIA interrupt sources, native Exec
+interrupt servers, and video presentation remain outside this milestone.
+
+### Acceptance test
+
+A focused 68k test program must:
+
+1. Allocate a Copper list with `MEMF_CHIP` that sets `COLOR00` to black,
+   waits for a line, sets `COLOR00` to red, and sets `INTREQ` `COPER`.
+2. Add `VERTB` and `COPER` servers with `AddIntServer()`, start the list
+   through `COP1LC`/`COPJMP1` and `DMACON`.
+3. Count a fixed number of `VERTB` interrupts and the same number (within
+   one) of `COPER` interrupts.
+4. Under `Disable()`, wait longer than a frame and observe no server call;
+   after `Enable()`, observe interrupts resume.
+5. Install a Blitter handler with `SetIntVector()`, run a blit, and check
+   the handler arguments, its own `INTREQ` acknowledgement, and that the
+   previous vector is returned and restored.
+6. Remove the servers with `RemIntServer()` and observe their `INTENA` bits
+   cleared.
+7. Exit with a deterministic result suitable for the host test suite.
+
+The host test must then confirm, through Rigel's public API, a completed
+frame that is black above the waited line and red below it.
+
+Completion requires this test, the milestone 2 test and all legacy
+non-Rigel host tests to pass, and `kernel-m68kemu-library` to build with
+and without `--enable-m68kemu-rigel`.
+
 ## Remaining work
 
 - **Remaining Hunk blocks:** the loader handles `HUNK_RELOC32`,
