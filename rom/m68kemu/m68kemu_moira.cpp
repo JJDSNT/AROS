@@ -129,6 +129,14 @@ public:
 
     u8 read8(u32 addr) const override
     {
+#ifdef M68KEMU_WITH_RIGEL
+        if (ctx->rigel && (addr & CUSTOM_MASK) == CUSTOM_BASE)
+        {
+            ULONG value = 0;
+            if (M68KEmu_RigelRead(ctx, addr, 1, &value))
+                return (u8)value;
+        }
+#endif
         if ((addr & CUSTOM_MASK) == CUSTOM_BASE)
         {
             u16 w = customRead16(addr & 0xFFE);
@@ -146,14 +154,31 @@ public:
             return M68K_OP_STOP;
         }
         if ((addr & CUSTOM_MASK) == CUSTOM_BASE)
+        {
+#ifdef M68KEMU_WITH_RIGEL
+            if (ctx->rigel)
+            {
+                ULONG value = 0;
+                if (M68KEmu_RigelRead(ctx, addr, 2, &value))
+                    return (u16)value;
+            }
+#endif
             return customRead16(addr & 0xFFE);
+        }
         if (addr + 1 >= ctx->mem_size) return 0;
         return ((u16)ctx->mem[addr] << 8) | ctx->mem[addr + 1];
     }
 
     void write8(u32 addr, u8 val) const override
     {
-        if ((addr & CUSTOM_MASK) == CUSTOM_BASE) return;
+        if ((addr & CUSTOM_MASK) == CUSTOM_BASE)
+        {
+#ifdef M68KEMU_WITH_RIGEL
+            if (ctx->rigel)
+                (void)M68KEmu_RigelWrite(ctx, addr, 1, val);
+#endif
+            return;
+        }
         if (addr >= ctx->mem_size) return;
         ctx->mem[addr] = val;
     }
@@ -162,6 +187,13 @@ public:
     {
         if ((addr & CUSTOM_MASK) == CUSTOM_BASE)
         {
+#ifdef M68KEMU_WITH_RIGEL
+            if (ctx->rigel)
+            {
+                (void)M68KEmu_RigelWrite(ctx, addr, 2, val);
+                return;
+            }
+#endif
             customWrite16(addr & 0xFFE, val);
             return;
         }
@@ -320,6 +352,14 @@ LONG M68KEmu_Execute(struct M68KEmuContext *ctx)
     m68k_write32(ctx, 4, ctx->entry_point);
     cpu.reset();
 
+#ifdef M68KEMU_WITH_RIGEL
+    if (ctx->rigel)
+    {
+        M68KEmu_RigelStepCPU(ctx, (unsigned long long)cpu.getClock());
+        cpu.setIPL(M68KEmu_RigelIPL(ctx));
+    }
+#endif
+
     /* Restore AbsExecBase at address 4 */
     m68k_write32(ctx, 4, ctx->m68k_sysbase);
 
@@ -350,7 +390,21 @@ LONG M68KEmu_Execute(struct M68KEmuContext *ctx)
     ctx->exit_code = 0;
 
     while (ctx->running)
+    {
+#ifdef M68KEMU_WITH_RIGEL
+        i64 clock_before = cpu.getClock();
+#endif
         cpu.execute();
+#ifdef M68KEMU_WITH_RIGEL
+        if (ctx->rigel)
+        {
+            i64 elapsed = cpu.getClock() - clock_before;
+            if (elapsed > 0)
+                M68KEmu_RigelStepCPU(ctx, (unsigned long long)elapsed);
+            cpu.setIPL(M68KEmu_RigelIPL(ctx));
+        }
+#endif
+    }
 
     ctx->exit_code = (LONG)cpu.getD(0);
     return ctx->exit_code;

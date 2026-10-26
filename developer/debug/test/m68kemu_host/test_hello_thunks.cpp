@@ -34,10 +34,10 @@ ULONG M68KEmu_OpenLibrary(struct M68KEmuContext *, const char *) { return 0; }
 ULONG M68KEmu_LoadM68KLibrary(struct M68KEmuContext *, const char *) { return 0; }
 }
 
-#include "../../rom/m68kemu/m68kemu_memory.c"
-#include "../../rom/m68kemu/Moira/Moira/Moira.cpp"
-#include "../../rom/m68kemu/Moira/Moira/MoiraDebugger.cpp"
-#include "../../rom/m68kemu/m68kemu_moira.cpp"
+#include "../../../../rom/m68kemu/m68kemu_memory.c"
+#include "../../../../rom/m68kemu/Moira/Moira/Moira.cpp"
+#include "../../../../rom/m68kemu/Moira/Moira/MoiraDebugger.cpp"
+#include "../../../../rom/m68kemu/m68kemu_moira.cpp"
 
 int main()
 {

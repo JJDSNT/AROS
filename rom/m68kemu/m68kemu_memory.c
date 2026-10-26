@@ -55,6 +55,9 @@ struct M68KEmuContext *M68KEmu_CreateContext(struct M68KEmuLibBase *base)
 void M68KEmu_DestroyContext(struct M68KEmuContext *ctx)
 {
     if (!ctx) return;
+#ifdef M68KEMU_WITH_RIGEL
+    M68KEmu_RigelDestroy(ctx);
+#endif
     if (ctx->mem) FreeMem(ctx->mem, ctx->mem_size);
     FreeMem(ctx, sizeof(struct M68KEmuContext));
 }

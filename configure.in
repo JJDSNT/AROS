@@ -928,6 +928,17 @@ if test "$aros_config_lto" != "no"; then
 fi
 AC_MSG_RESULT($aros_config_lto)
 
+AC_MSG_CHECKING([if Rigel chipset support should be built into m68kemu.library])
+AC_ARG_ENABLE(m68kemu-rigel,
+ AS_HELP_STRING([--enable-m68kemu-rigel],[Enable optional Rigel chipset support in m68kemu.library (default=no)]),
+ aros_m68kemu_rigel="$enableval",aros_m68kemu_rigel="no")
+case "$aros_m68kemu_rigel" in
+    yes|no) ;;
+    *) AC_MSG_ERROR([--enable-m68kemu-rigel accepts only yes or no]) ;;
+esac
+aros_target_options="$aros_target_options$export_newline""M68KEMU_RIGEL                 := $aros_m68kemu_rigel$export_newline"
+AC_MSG_RESULT($aros_m68kemu_rigel)
+
 AC_MSG_CHECKING([if we should enable coverage instrumentation])
 AC_ARG_ENABLE(coverage,AS_HELP_STRING([--enable-coverage=[yes|no]],[Enable coverage instrumentation if the target compiler supports it (default=no)]),
  aros_config_coverage="$enableval",aros_config_coverage="no")

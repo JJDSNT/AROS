@@ -229,3 +229,6 @@
 [submodule "workbench/system/accounts/catalogs"]
 	path = workbench/system/accounts/catalogs
 	url = https://github.com/aros-translation-team/accounts.git
+[submodule "rom/m68kemu/Rigel"]
+	path = rom/m68kemu/Rigel
+	url = https://github.com/JJDSNT/rigel.git

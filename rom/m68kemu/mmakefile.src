@@ -37,11 +37,26 @@ M68KEMU_CXXFILES := \
     Moira/Moira/Moira \
     Moira/Moira/MoiraDebugger
 
+M68KEMU_USELIBS := stdc++ posixc stdcio stdc
+
+ifeq ($(M68KEMU_RIGEL),yes)
+USER_CPPFLAGS += -DM68KEMU_WITH_RIGEL=1 \
+    -I$(SRCDIR)/$(CURDIR)/Rigel/include
+M68KEMU_FILES += m68kemu_rigel
+M68KEMU_USELIBS += rigel
+
+%build_with_cmake mmake=linklibs-rigel package=rigel \
+    srcdir=$(SRCDIR)/$(CURDIR)/Rigel \
+    gendir=$(GENDIR)/$(CURDIR)/Rigel-build \
+    prefix=$(AROS_DEVELOPER) \
+    extraoptions="-DRIGEL_BUILD_TESTS=OFF -DRIGEL_BUILD_HARNESS=OFF -DRIGEL_ENABLE_STDIO_LOG=OFF -DRIGEL_ENABLE_STDLIB_ENV=OFF -DRIGEL_ENABLE_STDLIB_ALLOC=OFF -DRIGEL_ENABLE_HOSTED_RTC=OFF -DRIGEL_ENABLE_SIMD=OFF"
+endif
+
 %build_module mmake=kernel-m68kemu-library \
     modname=m68kemu modtype=library \
     files="$(M68KEMU_FILES)" \
     cxxfiles="$(M68KEMU_CXXFILES)" \
-    uselibs="stdc++ posixc stdcio stdc"
+    uselibs="$(M68KEMU_USELIBS)"
 
 %common
 

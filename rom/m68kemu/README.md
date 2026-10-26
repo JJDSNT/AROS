@@ -67,7 +67,8 @@ Address Map (32 MB):
 
 ### Custom Chip Register Emulation
 
-Programs that poll Amiga custom chip registers (e.g., busy-waiting on the video
+The default build retains the minimal custom-register implementation so existing
+behavior is unchanged. Programs that poll Amiga custom chip registers (e.g., busy-waiting on the video
 beam position via VHPOSR at `$DFF006`) are supported through a minimal custom
 chip emulation layer. The emulator intercepts reads/writes to the `$DFF000-$DFFFFF`
 address range and provides:
@@ -81,6 +82,13 @@ address range and provides:
 The beam counter advances by 2 color clocks per custom chip register read,
 providing changing values for polling loops and RNG seeding. There is no
 per-instruction cycle counting — the beam only advances on register access.
+
+An optional build with `--enable-m68kemu-rigel` statically links
+[Rigel](https://github.com/JJDSNT/rigel). Calls to `RunHunkEx()` or `RunFileEx()`
+with `M68KEMU_RUN_RIGEL` then use Rigel for custom-register MMIO, share the
+lowest 512 KiB of containment memory as OCS Chip RAM, advance chipset time from
+Moira's executed CPU cycles, and publish Rigel's IPL to Moira. See
+[RIGEL.md](RIGEL.md) for the build, validation, and remaining integration work.
 
 ### A-Line Trap Mechanism
 
@@ -293,8 +301,11 @@ within the emulator.
 
 ### CPU
 
-- No interrupt delivery to m68k code (INTREQR/INTENA return 0)
-- Single-threaded: one m68k instruction at a time, no cycle counting
+- The default chipset fallback does not deliver interrupts and returns zero for
+  INTREQR/INTENA
+- Rigel builds publish IPL at instruction boundaries; native Exec interrupt
+  server bridging is not implemented
+- Single-threaded: one m68k instruction at a time
 
 ### Memory
 
@@ -337,11 +348,12 @@ within the emulator.
 
 | File | Description |
 |------|-------------|
-| `m68kemu.conf` | AROS library definition (LVO 5: RunHunk, LVO 6: RunFile) |
+| `m68kemu.conf` | AROS library definition (`RunHunk`/`RunFile` and optional-mode `Ex` variants) |
 | `m68kemu_intern.h` | Context struct, fake lib bases, inline helpers, memory accessors |
 | `m68kemu_moira.cpp` | Moira subclass, A-line exception handler, sentinel detection |
 | `m68kemu_run.c` | RunHunk/RunFile entry points, process creation, ExecBase shadow init |
 | `m68kemu_memory.c` | Containment memory allocation, heap allocator, hunk loaders |
+| `m68kemu_rigel.c` | Optional Rigel lifecycle, shared Chip RAM, MMIO, timing, and IPL bridge |
 | `m68kemu_init.c` | Library init/open/close |
 | `m68kemu_stubs.c` | AROS library stubs |
 | `mmakefile.src` | Build rules (C++20 for Moira, links stdc++/stdcio/stdc/posixc) |
@@ -407,14 +419,16 @@ grep -oP '(OFF|SIZ)\|[^"]*' m68k.s | sed 's/#//g' > m68k_offsets.txt
 | Path | Description |
 |------|-------------|
 | `Moira/` | Git submodule: [github.com/dirkwhoffmann/Moira](https://github.com/dirkwhoffmann/Moira) |
+| `Rigel/` | Optional git submodule: [github.com/JJDSNT/rigel](https://github.com/JJDSNT/rigel) |
 
 ### Tests
 
 | File | Description |
 |------|-------------|
-| `tests/m68kemu_host/test_m68kemu.cpp` | Host-side unit tests: context, heap, endian, pointer translation, lib bases |
-| `tests/m68kemu_host/test_moira_exec.cpp` | Host-side Moira execution tests: MOVEQ/RTS, ADD, loops, memory access |
-| `tests/m68kemu_host/test_hello_thunks.cpp` | Host-side end-to-end: A-line trap → thunk dispatch → return |
+| `developer/debug/test/m68kemu_host/test_m68kemu.cpp` | Host-side unit tests: context, heap, endian, pointer translation, lib bases |
+| `developer/debug/test/m68kemu_host/test_moira_exec.cpp` | Host-side Moira execution tests: MOVEQ/RTS, ADD, loops, memory access |
+| `developer/debug/test/m68kemu_host/test_hello_thunks.cpp` | Host-side end-to-end: A-line trap → thunk dispatch → return |
+| `developer/debug/test/m68kemu_host/test_rigel_integration.cpp` | Moira + native LVO + Rigel MMIO/timing/shared Chip RAM proof |
 | `developer/debug/test/m68kemu/test_m68kemu.c` | AROS-side test: opens m68kemu.library (execution test incomplete) |
 
 ## Building
@@ -434,6 +448,11 @@ rm -rf bin/linux-x86_64/gen/rom/m68kemu
 make kernel-m68kemu
 ```
 
+To build the optional Rigel path, configure a fresh build tree with
+`--enable-m68kemu-rigel`, initialize both submodules, and build the same target.
+Existing callers still use the fallback; opt in at execution time with
+`RunHunkEx(..., M68KEMU_RUN_RIGEL)` or `RunFileEx(..., M68KEMU_RUN_RIGEL)`.
+
 The built library appears at `bin/linux-x86_64/AROS/Libs/m68kemu.library`.
 
 ### Installation
@@ -452,7 +471,7 @@ RunM68K <m68k-binary> [arguments]
 
 ```bash
 # Host-side unit tests (no AROS required)
-cd tests/m68kemu_host
+cd developer/debug/test/m68kemu_host
 make
 ./test_m68kemu
 
@@ -469,6 +488,7 @@ make test-m68kemu
 | Dependency | Version | License | Purpose |
 |------------|---------|---------|---------|
 | [Moira](https://github.com/dirkwhoffmann/Moira) | HEAD | MIT | M68000 CPU emulation core |
+| [Rigel](https://github.com/JJDSNT/rigel) | pinned submodule | No license declared yet | Optional classic Amiga chipset emulation; resolve licensing before distribution |
 | AROS SDK | — | MPL | Target platform headers and libraries |
 | GCC | 14.x | GPL | C/C++ compiler (C++20 for Moira) |
 | Python | 3.x | PSF | Code generators (thunks, shadow layouts) |

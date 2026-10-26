@@ -20,14 +20,14 @@ ULONG M68KEmu_LoadM68KLibrary(struct M68KEmuContext *, const char *) { return 0;
 }
 
 /* Include the C sources */
-#include "../../rom/m68kemu/m68kemu_memory.c"
+#include "../../../../rom/m68kemu/m68kemu_memory.c"
 
 /* Include Moira */
-#include "../../rom/m68kemu/Moira/Moira/Moira.cpp"
-#include "../../rom/m68kemu/Moira/Moira/MoiraDebugger.cpp"
+#include "../../../../rom/m68kemu/Moira/Moira/Moira.cpp"
+#include "../../../../rom/m68kemu/Moira/Moira/MoiraDebugger.cpp"
 
 /* Include our Moira subclass */
-#include "../../rom/m68kemu/m68kemu_moira.cpp"
+#include "../../../../rom/m68kemu/m68kemu_moira.cpp"
 
 #include <cstdio>
 static int pass = 0, fail = 0;

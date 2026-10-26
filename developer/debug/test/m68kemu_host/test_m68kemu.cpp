@@ -24,7 +24,7 @@ ULONG M68KEmu_LoadM68KLibrary(struct M68KEmuContext *, const char *) { return 0;
 }
 
 /* Include memory manager source */
-#include "../../rom/m68kemu/m68kemu_memory.c"
+#include "../../../../rom/m68kemu/m68kemu_memory.c"
 
 #include <cstdio>
 static int pass = 0, fail = 0;

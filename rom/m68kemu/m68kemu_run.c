@@ -130,6 +130,97 @@ static LONG setup_and_execute(struct M68KEmuContext *ctx, ULONG entry,
     return result;
 }
 
+static struct M68KEmuContext *create_context_for_flags(
+    struct M68KEmuLibBase *base, ULONG flags)
+{
+    struct M68KEmuContext *ctx;
+
+    if (flags & ~M68KEMU_RUN_RIGEL)
+        return NULL;
+
+    ctx = M68KEmu_CreateContext(base);
+    if (!ctx)
+        return NULL;
+
+    if (flags & M68KEMU_RUN_RIGEL)
+    {
+#ifdef M68KEMU_WITH_RIGEL
+        if (!M68KEmu_RigelInit(ctx))
+        {
+            M68KEmu_DestroyContext(ctx);
+            return NULL;
+        }
+#else
+        M68KEmu_DestroyContext(ctx);
+        return NULL;
+#endif
+    }
+
+    return ctx;
+}
+
+static LONG run_hunk_internal(BPTR segList, ULONG stackSize,
+                              CONST_STRPTR argPtr, ULONG argSize,
+                              ULONG flags,
+                              struct M68KEmuLibBase *M68KEmuBase)
+{
+    struct M68KEmuContext *ctx;
+    ULONG entry;
+    LONG result = -1;
+
+    ctx = create_context_for_flags(M68KEmuBase, flags);
+    if (!ctx)
+        return -1;
+
+    entry = M68KEmu_LoadHunks(ctx, segList);
+    if (entry)
+        result = setup_and_execute(ctx, entry, argPtr, argSize,
+                                   stackSize, NULL, M68KEmuBase);
+
+    M68KEmu_DestroyContext(ctx);
+    return result;
+}
+
+static LONG run_file_internal(CONST_STRPTR fileName, ULONG stackSize,
+                              CONST_STRPTR argPtr, ULONG argSize,
+                              ULONG flags,
+                              struct M68KEmuLibBase *M68KEmuBase)
+{
+    struct M68KEmuContext *ctx;
+    BPTR fh;
+    LONG fileSize;
+    UBYTE *fileData;
+    ULONG entry;
+    LONG result = -1;
+
+    fh = Open(fileName, MODE_OLDFILE);
+    if (!fh) return -1;
+
+    Seek(fh, 0, OFFSET_END);
+    fileSize = Seek(fh, 0, OFFSET_BEGINNING);
+    if (fileSize <= 0) { Close(fh); return -1; }
+
+    fileData = (UBYTE *)AllocMem(fileSize, MEMF_ANY);
+    if (!fileData) { Close(fh); return -1; }
+
+    if (Read(fh, fileData, fileSize) != fileSize)
+    { FreeMem(fileData, fileSize); Close(fh); return -1; }
+    Close(fh);
+
+    ctx = create_context_for_flags(M68KEmuBase, flags);
+    if (!ctx) { FreeMem(fileData, fileSize); return -1; }
+
+    entry = M68KEmu_LoadHunksFromMemory(ctx, fileData, fileSize);
+    FreeMem(fileData, fileSize);
+
+    if (entry)
+        result = setup_and_execute(ctx, entry, argPtr, argSize,
+                                   stackSize, fileName, M68KEmuBase);
+
+    M68KEmu_DestroyContext(ctx);
+    return result;
+}
+
 /*****************************************************************************
 
     NAME */
@@ -164,21 +255,8 @@ static LONG setup_and_execute(struct M68KEmuContext *ctx, ULONG entry,
 {
     AROS_LIBFUNC_INIT
 
-    struct M68KEmuContext *ctx;
-    ULONG entry;
-    LONG result = -1;
-
-    ctx = M68KEmu_CreateContext(M68KEmuBase);
-    if (!ctx)
-        return -1;
-
-    entry = M68KEmu_LoadHunks(ctx, segList);
-    if (entry)
-        result = setup_and_execute(ctx, entry, argPtr, argSize,
-                                   stackSize, NULL, M68KEmuBase);
-
-    M68KEmu_DestroyContext(ctx);
-    return result;
+    return run_hunk_internal(segList, stackSize, argPtr, argSize, 0,
+                             M68KEmuBase);
 
     AROS_LIBFUNC_EXIT
 }
@@ -197,39 +275,44 @@ static LONG setup_and_execute(struct M68KEmuContext *ctx, ULONG entry,
 {
     AROS_LIBFUNC_INIT
 
-    struct M68KEmuContext *ctx;
-    BPTR fh;
-    LONG fileSize;
-    UBYTE *fileData;
-    ULONG entry;
-    LONG result = -1;
+    return run_file_internal(fileName, stackSize, argPtr, argSize, 0,
+                             M68KEmuBase);
 
-    fh = Open(fileName, MODE_OLDFILE);
-    if (!fh) return -1;
+    AROS_LIBFUNC_EXIT
+}
 
-    Seek(fh, 0, OFFSET_END);
-    fileSize = Seek(fh, 0, OFFSET_BEGINNING);
-    if (fileSize <= 0) { Close(fh); return -1; }
+#include <proto/m68kemu.h>
 
-    fileData = (UBYTE *)AllocMem(fileSize, MEMF_ANY);
-    if (!fileData) { Close(fh); return -1; }
+        AROS_LH5(LONG, RunHunkEx,
+        AROS_LHA(BPTR,         segList,   D1),
+        AROS_LHA(ULONG,        stackSize, D2),
+        AROS_LHA(CONST_STRPTR, argPtr,    D3),
+        AROS_LHA(ULONG,        argSize,   D4),
+        AROS_LHA(ULONG,        flags,     D5),
+        struct M68KEmuLibBase *, M68KEmuBase, 7, M68kemu)
+{
+    AROS_LIBFUNC_INIT
 
-    if (Read(fh, fileData, fileSize) != fileSize)
-    { FreeMem(fileData, fileSize); Close(fh); return -1; }
-    Close(fh);
+    return run_hunk_internal(segList, stackSize, argPtr, argSize, flags,
+                             M68KEmuBase);
 
-    ctx = M68KEmu_CreateContext(M68KEmuBase);
-    if (!ctx) { FreeMem(fileData, fileSize); return -1; }
+    AROS_LIBFUNC_EXIT
+}
 
-    entry = M68KEmu_LoadHunksFromMemory(ctx, fileData, fileSize);
-    FreeMem(fileData, fileSize);
+#include <proto/m68kemu.h>
 
-    if (entry)
-        result = setup_and_execute(ctx, entry, argPtr, argSize,
-                                   stackSize, fileName, M68KEmuBase);
+        AROS_LH5(LONG, RunFileEx,
+        AROS_LHA(CONST_STRPTR, fileName, D1),
+        AROS_LHA(ULONG,        stackSize, D2),
+        AROS_LHA(CONST_STRPTR, argPtr,    D3),
+        AROS_LHA(ULONG,        argSize,   D4),
+        AROS_LHA(ULONG,        flags,     D5),
+        struct M68KEmuLibBase *, M68KEmuBase, 8, M68kemu)
+{
+    AROS_LIBFUNC_INIT
 
-    M68KEmu_DestroyContext(ctx);
-    return result;
+    return run_file_internal(fileName, stackSize, argPtr, argSize, flags,
+                             M68KEmuBase);
 
     AROS_LIBFUNC_EXIT
 }

@@ -25,6 +25,10 @@ struct M68KEmuLibBase
 #define M68KEMU_HEAP_BASE       0x010400
 #define M68KEMU_STACK_SIZE      (64 * 1024)
 
+#ifndef M68KEMU_RUN_RIGEL
+#define M68KEMU_RUN_RIGEL       (1UL << 0)
+#endif
+
 struct M68KHeapBlock
 {
     ULONG size;
@@ -103,6 +107,10 @@ struct M68KEmuContext
     UWORD   beam_v;     /* vertical position 0-312 */
     UBYTE   beam_h;     /* horizontal position 0-226 */
     UBYTE   beam_lof;   /* long frame flag (toggled each frame) */
+
+#ifdef M68KEMU_WITH_RIGEL
+    APTR    rigel;
+#endif
 };
 
 static inline void *m68k_to_host(struct M68KEmuContext *ctx, ULONG addr)
@@ -189,6 +197,17 @@ ULONG  M68KEmu_OpenLibrary(struct M68KEmuContext *ctx, const char *name);
 
 /* Scan containment memory for C startup auto-open tables and fill them */
 void   M68KEmu_AutoOpenLibs(struct M68KEmuContext *ctx);
+
+#ifdef M68KEMU_WITH_RIGEL
+BOOL   M68KEmu_RigelInit(struct M68KEmuContext *ctx);
+void   M68KEmu_RigelDestroy(struct M68KEmuContext *ctx);
+BOOL   M68KEmu_RigelRead(struct M68KEmuContext *ctx, ULONG addr,
+                         UBYTE size, ULONG *value);
+BOOL   M68KEmu_RigelWrite(struct M68KEmuContext *ctx, ULONG addr,
+                          UBYTE size, ULONG value);
+void   M68KEmu_RigelStepCPU(struct M68KEmuContext *ctx, unsigned long long cycles);
+UBYTE  M68KEmu_RigelIPL(const struct M68KEmuContext *ctx);
+#endif
 
 #ifdef __cplusplus
 }

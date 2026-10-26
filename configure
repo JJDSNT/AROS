@@ -994,6 +994,7 @@ enable_libpng_config
 with_aros_prefs
 with_toolchain
 enable_lto
+enable_m68kemu_rigel
 enable_coverage
 enable_wchar32
 enable_build_type
@@ -1703,6 +1704,8 @@ Optional Features:
 --disable-libpng-config    disable libpng-config test and configuration
   --enable-lto=yes|no     Enable link time optimizations if the target
                           compiler supports them (default=no)
+  --enable-m68kemu-rigel  Enable optional Rigel chipset support in
+                          m68kemu.library (default=no)
   --enable-coverage=yes|no
                           Enable coverage instrumentation if the target
                           compiler supports it (default=no)
@@ -9746,6 +9749,25 @@ if test "$aros_config_lto" != "no"; then
 fi
 { printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: $aros_config_lto" >&5
 printf '%s\n' "$aros_config_lto" >&6; }
+
+{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking if Rigel chipset support should be built into m68kemu.library" >&5
+printf %s "checking if Rigel chipset support should be built into m68kemu.library... " >&6; }
+# Check whether --enable-m68kemu-rigel was given.
+if test ${enable_m68kemu_rigel+y}
+then :
+  enableval=$enable_m68kemu_rigel; aros_m68kemu_rigel="$enableval"
+else case e in #(
+  e) aros_m68kemu_rigel="no" ;;
+esac
+fi
+
+case "$aros_m68kemu_rigel" in
+    yes|no) ;;
+    *) as_fn_error $? "--enable-m68kemu-rigel accepts only yes or no" "$LINENO" 5 ;;
+esac
+aros_target_options="$aros_target_options$export_newline""M68KEMU_RIGEL                 := $aros_m68kemu_rigel$export_newline"
+{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: $aros_m68kemu_rigel" >&5
+printf '%s\n' "$aros_m68kemu_rigel" >&6; }
 
 { printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking if we should enable coverage instrumentation" >&5
 printf %s "checking if we should enable coverage instrumentation... " >&6; }
