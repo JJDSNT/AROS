@@ -372,6 +372,51 @@ on Escape when run with `RunM68K DISPLAY`.
 Completion requires this test and all earlier host tests to pass, and
 `kernel-m68kemu-library` to build with and without `--enable-m68kemu-rigel`.
 
+## Milestone 6: audio
+
+Programs can draw and read input, but Paula's output goes nowhere. This
+milestone samples Rigel's mixed audio at a host rate and plays it through
+AHI next to the display window.
+
+### Scope
+
+- Sample `rigel_get_audio_sample()` at a host-chosen rate on the chipset's
+  time axis: CPU cycles accumulate against `rigel_get_clock_hz()` (the CPU
+  rate, matching the cycles the bridge steps with), so samples track
+  emulated time exactly, independent of host speed.
+- Extend the presenter with an audio rate and an audio callback that
+  receives each frame's interleaved 16-bit stereo samples before the frame
+  itself.
+- In the AROS presenter, stream the samples to `ahi.device` with chained
+  `CMD_WRITE` requests at 22050 Hz. Without a usable AHI unit the program
+  keeps running silently.
+
+Audio filters (the A500 low-pass and LED filter), per-voice output for a
+host mixer (Rigel `ISSUE-0007`), and sample-accurate audio/video sync
+beyond per-frame batches remain outside this milestone.
+
+### Acceptance test
+
+A focused 68k test program must:
+
+1. Allocate a 32-byte square-wave sample with `MEMF_CHIP`.
+2. Play it on audio channel 0 at period 252 (about 440 Hz) and volume 64
+   with audio DMA, with a channel 0 handler installed with
+   `SetIntVector()` counting block interrupts.
+3. Run a fixed number of frames, see about 440 block interrupts per
+   second, stop DMA and exit with a deterministic result.
+
+The host test, with a presenter that records samples, must confirm:
+
+- 441 (+/-1) stereo samples per PAL frame at 22050 Hz;
+- a tone of about 440 Hz on the left output, where Paula routes channel 0,
+  and silence on the right;
+- silence before the program starts audio DMA.
+
+Completion requires this test and all earlier host tests to pass, and
+`kernel-m68kemu-library` to build with and without
+`--enable-m68kemu-rigel`.
+
 ## Remaining work
 
 - **Remaining Hunk blocks:** the loader handles `HUNK_RELOC32`,
