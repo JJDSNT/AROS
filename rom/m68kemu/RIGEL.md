@@ -303,6 +303,55 @@ Completion requires this test and the earlier milestone and legacy host
 tests to pass, and `kernel-m68kemu-library` to build with and without
 `--enable-m68kemu-rigel`.
 
+## Milestone 5: CIAs and input
+
+Milestone 4 shows a program's display but nothing reaches it from the
+user, and its CIA accesses land in contained RAM instead of Rigel's CIAs.
+This milestone routes the CIA address space to Rigel and feeds the
+display window's keyboard and mouse into the chipset, so a program that
+reads the hardware directly can be interactive.
+
+### Scope
+
+- In Rigel mode, forward CPU accesses to the classic I/O space
+  (`$A00000-$DFFFFF`: CIAs and custom chips) to Rigel's MMIO decoder, and
+  keep the containment heap out of that range so no allocation shadows it.
+- Add bridge input calls built on Rigel's public input API: keyboard
+  events, mouse movement (port 0 quadrature counters), left and right
+  mouse buttons. Keyboard events are queued and delivered one per frame,
+  because Rigel injects a key straight into CIA-A's serial register
+  without the keyboard's handshake (Rigel `ISSUE-0016`).
+- Feed the display window's raw keys, mouse movement and buttons into
+  those calls. Escape becomes an ordinary key; the close gadget and Ctrl-C
+  still stop the program.
+- CIA timers and their interrupts reach contained `PORTS`/`EXTER` servers
+  through the milestone 3 dispatcher.
+
+`ciaa.resource`/`ciab.resource` emulation, joystick input from the host,
+the keyboard's reset sequence, and audio remain outside this milestone.
+
+### Acceptance test
+
+A focused 68k test program must:
+
+1. Install a `PORTS` server that reads CIA-A `ICR`, decodes keyboard bytes
+   from `SDR` and performs the `SPMODE` handshake, and counts timer A
+   interrupts.
+2. Run CIA-A timer A continuously at about 100 Hz with its interrupt
+   enabled.
+3. Over a fixed number of frames, receive the key events the host injects
+   in order, and see the injected mouse movement in `JOY0DAT`, the left
+   button on CIA-A `PRA` and the right button on `POTGOR`.
+4. Count timer A interrupts within the expected range for the elapsed
+   chipset time, and exit with a deterministic result.
+
+The host test injects the events through the bridge calls at chosen frames.
+On hosted AROS, the display program must react to the mouse button and quit
+on Escape when run with `RunM68K DISPLAY`.
+
+Completion requires this test and all earlier host tests to pass, and
+`kernel-m68kemu-library` to build with and without `--enable-m68kemu-rigel`.
+
 ## Remaining work
 
 - **Remaining Hunk blocks:** the loader handles `HUNK_RELOC32`,
