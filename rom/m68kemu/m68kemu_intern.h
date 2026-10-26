@@ -29,6 +29,11 @@ struct M68KEmuLibBase
    the split Chip/Fast heap (Rigel mode); otherwise there is one heap. */
 #define M68KEMU_CHIP_RAM_SIZE   (512UL * 1024UL)
 
+/* Classic I/O space (CIAs at $BFxxxx, custom chips at $DFFxxx). With Rigel
+   it is forwarded to the chipset and kept out of the heap. */
+#define M68KEMU_IO_START        0x00A00000UL
+#define M68KEMU_IO_END          0x00E00000UL
+
 #ifndef M68KEMU_RUN_RIGEL
 #define M68KEMU_RUN_RIGEL       (1UL << 0)
 #endif
@@ -175,6 +180,14 @@ struct M68KEmuContext
 #ifdef M68KEMU_WITH_RIGEL
     APTR    rigel;
     struct M68KEmuPresenter presenter;
+
+    /* Host input: keys wait here and reach Rigel one per frame */
+    #define M68KEMU_KEY_QUEUE 32
+    UBYTE   key_queue[M68KEMU_KEY_QUEUE];   /* raw key, bit 7 = up */
+    UBYTE   key_head;
+    UBYTE   key_count;
+    UBYTE   mouse_x;                        /* port 0 quadrature counters */
+    UBYTE   mouse_y;
 #endif
 };
 
@@ -283,6 +296,9 @@ void   M68KEmu_AutoOpenLibs(struct M68KEmuContext *ctx);
 BOOL   M68KEmu_RigelInit(struct M68KEmuContext *ctx);
 void   M68KEmu_RigelDestroy(struct M68KEmuContext *ctx);
 BOOL   M68KEmu_DisplayAttach(struct M68KEmuContext *ctx);
+void   M68KEmu_RigelInputKey(struct M68KEmuContext *ctx, UBYTE rawkey);
+void   M68KEmu_RigelInputMouse(struct M68KEmuContext *ctx, LONG dx, LONG dy);
+void   M68KEmu_RigelInputButtons(struct M68KEmuContext *ctx, BOOL left, BOOL right);
 void   M68KEmu_RigelIntState(struct M68KEmuContext *ctx, UWORD *intena, UWORD *intreq);
 BOOL   M68KEmu_RigelRead(struct M68KEmuContext *ctx, ULONG addr,
                          UBYTE size, ULONG *value);

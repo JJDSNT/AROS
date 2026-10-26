@@ -85,6 +85,7 @@ static void check(bool ok, const char *what)
 struct Recorder
 {
     ULONG stop_after;               /* 0 = never ask to stop */
+    bool  interact;                 /* left button at 4, Escape at 8 */
     ULONG presented;
     ULONG destroyed;
     std::vector<ULONG> numbers;
@@ -107,6 +108,10 @@ static BOOL record_present(struct M68KEmuContext *ctx,
         std::memcpy(&r->frames.back()[(size_t)y * frame->width],
                     (const UBYTE *)frame->pixels + (size_t)y * frame->pitch,
                     frame->width * sizeof(ULONG));
+    if (r->interact && r->presented == 4)
+        M68KEmu_RigelInputButtons(ctx, TRUE, FALSE);
+    if (r->interact && r->presented == 8)
+        M68KEmu_RigelInputKey(ctx, 0x45);           /* Escape down */
     return !(r->stop_after && r->presented >= r->stop_after);
 }
 
@@ -262,6 +267,24 @@ static void test_stop()
           "program ends after 3 of 50 frames with RETURN_WARN");
 }
 
+static void test_interaction()
+{
+    std::printf("Mouse button and Escape\n");
+
+    Recorder r = {};
+    r.interact = true;
+    LONG result = run_display(r, "50\n");
+    check(result == 0 && r.presented > 8 && r.presented < 20,
+          "Escape through the keyboard ends the program early with 0");
+
+    /* Frame 1 precedes the display setup and has another size */
+    bool red = false;
+    for (size_t i = 2; i < r.frames.size(); i++)
+        red = red || r.frames[i][8 * r.width] == rgb(0x0f00);
+    check(r.frames.size() > 2 && r.frames[2][8 * r.width] == rgb(0x0026) && red,
+          "background turns red while the left button is held");
+}
+
 int main()
 {
     std::signal(SIGALRM, [](int) {
@@ -273,6 +296,7 @@ int main()
 
     test_frames();
     test_stop();
+    test_interaction();
 
     std::printf("%s: Rigel milestone 4 (display)\n", failures ? "FAIL" : "PASS");
     return failures ? 1 : 0;

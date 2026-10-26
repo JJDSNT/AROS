@@ -49,8 +49,10 @@ publish a license before this integration can be distributed.
   before containment memory.
 - **Memory:** Rigel DMA callbacks read and write the lowest 512 KiB of the same
   big-endian containment block used by Moira.
-- **MMIO:** byte and word accesses in custom space are forwarded through
-  `rigel_mmio_read()` and `rigel_mmio_write()`.
+- **MMIO:** byte and word accesses to the classic I/O space
+  (`$A00000-$DFFFFF`: CIAs and custom chips) are forwarded through
+  `rigel_mmio_read()` and `rigel_mmio_write()`; Rigel decodes them, and
+  unmapped addresses read 0. The Fast heap skips that range.
 - **Timing:** after each Moira instruction, its elapsed CPU-cycle delta is passed
   to `rigel_step_cpu_cycles()`. The default Rigel ratio is two CPU cycles per
   CCK and retains fractional cycles.
@@ -83,8 +85,14 @@ publish a license before this integration can be distributed.
   it when the frame size changes (the first frame precedes the program's
   display setup), copies frames with `WritePixelArray()`, paces to the
   frame rate with `timer.device`, and stops the program with `RETURN_WARN`
-  on the close gadget, Escape or Ctrl-C. Window and timer belong to the
+  on the close gadget or Ctrl-C. Window and timer belong to the
   task that runs the program and are released when it returns.
+- **Input:** `M68KEmu_RigelInputKey()`, `M68KEmu_RigelInputMouse()` and
+  `M68KEmu_RigelInputButtons()` feed raw keys, port 0 mouse counters, the
+  left button (CIA-A `/FIR0`) and the right button (`POTY`). Keys are queued
+  and handed to Rigel one per frame. The display window forwards its raw
+  keys (without auto-repeat), mouse movement and buttons; Escape is an
+  ordinary key.
 - **Launching:** `RunM68K [RIGEL] [DISPLAY] <file> [args]` selects the
   chipset and the display; without switches it behaves as before.
 - **Logging:** Rigel's text log goes to the AROS debug log through
@@ -109,10 +117,18 @@ make test
 programs Rigel's Blitter through custom MMIO, and copies a word between two
 addresses in shared Chip RAM while chipset time advances from Moira cycles.
 
+`test_rigel_input` is the milestone 5 acceptance test. It checks that the
+Fast heap never reaches the I/O space, then runs `m68k/rigel_input.s`,
+injecting keys, mouse movement and buttons from the per-frame callback;
+the program reads them through CIA-A and the custom chips and counts CIA-A
+timer A at 100 Hz.
+
 `test_rigel_display` is the milestone 4 acceptance test. It runs
 `m68k/rigel_display.s` with a presenter that records frames, checks frame
 order and duration, locates the checkerboard and both colours, sees
-`COLOR01` change every frame, and stops a run early through the presenter.
+`COLOR01` change every frame, stops a run early through the presenter, and
+checks that the left button turns the background red and Escape ends the
+program.
 `M68KEMU_DUMP=file.ppm ./test_rigel_display` writes the last frame.
 
 On hosted AROS (linux-x86_64), `RunM68K DISPLAY rigel_display 1000` shows
@@ -305,6 +321,10 @@ tests to pass, and `kernel-m68kemu-library` to build with and without
 
 ## Milestone 5: CIAs and input
 
+Status: implemented; `test_rigel_input` passes with the earlier host tests,
+and on hosted AROS the display program reacts to the mouse button and quits
+on Escape.
+
 Milestone 4 shows a program's display but nothing reaches it from the
 user, and its CIA accesses land in contained RAM instead of Rigel's CIAs.
 This milestone routes the CIA address space to Rigel and feeds the
@@ -371,11 +391,17 @@ Completion requires this test and all earlier host tests to pass, and
   scaled, and the frame's dirty-line information is not used. Closing the
   window from a child process started with a non-zero `stackSize` cannot
   see Ctrl-C, which goes to the parent shell.
-- **Input:** keyboard, mouse and joystick events do not reach Rigel.
+- **Input:** host joysticks are not read; port 1 and the middle mouse
+  button are not fed. Keys reach Rigel one per frame rather than through
+  the keyboard handshake (Rigel `ISSUE-0016`), and the keyboard's reset and
+  power-up sequences are not sent.
+- **CIA resources:** `ciaa.resource`/`ciab.resource` (`AddICRVector()` and
+  friends) are not emulated; programs that read the CIAs directly work.
 - **Audio:** Rigel exposes mixed Paula samples; no AHI/native audio backend is
   connected yet.
-- **Input, CIA, RTC, disk, and serial:** Rigel has APIs for these domains, but
-  the bridge forwards only custom-register space.
+- **RTC, disk, and serial:** Rigel has APIs for these domains; their
+  registers are reachable through the I/O space, but no host side (disk
+  images, a serial port) is connected.
 
 ## Waiting on Rigel
 
@@ -390,3 +416,4 @@ follow-up here once Rigel resolves it.
 | `ISSUE-0013` no license | Integration cannot be distributed (see *Distribution blocker*) | Record the license here and in `README.md`; lift the blocker |
 | `ISSUE-0014` `rigel_get_clock_hz()` is the CPU rate | `present_frame()` converts at `rigel_get_clock_hz() / 2`, per `docs/timing_model.md` | Switch to the colour-clock accessor or context-aware conversion if one is added |
 | `ISSUE-0015` plain CMake build unoptimized; `cycle_exact` cost unmeasured | The AROS build passes `Release`; the host test `Makefile` now does too | Decide whether m68kemu enables `cycle_exact` once its cost is known |
+| `ISSUE-0016` keyboard injection without queue or handshake | `m68kemu_rigel.c` queues keys and delivers one per frame | Inject keys as they arrive and drop the bridge queue |

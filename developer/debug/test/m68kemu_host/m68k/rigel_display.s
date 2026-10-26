@@ -4,8 +4,10 @@
 ;
 ; Shows a one-bitplane 320x256 PAL playfield with a 16x16 checkerboard.
 ; The Copper sets up the display and reloads the bitplane pointer every
-; frame; a VERTB server cycles COLOR01. Runs for the number of frames given
-; as its argument (default 250, five seconds of PAL), then returns 0, or
+; frame; a VERTB server cycles COLOR01 and turns the background red while
+; the left mouse button is held. A PORTS server reads the keyboard from
+; CIA-A; Escape quits. Runs for the number of frames given as its argument
+; (default 250, five seconds of PAL) or until Escape, then returns 0, or
 ; the failing step.
 ;
 ;   RunM68K DISPLAY rigel_display [frames]
@@ -16,6 +18,7 @@ MEMF_CHIP       equ     $00000002
 MEMF_CLEAR      equ     $00010000
 NT_INTERRUPT    equ     2
 
+INTB_PORTS      equ     3
 _LVOAddIntServer equ    -168
 _LVORemIntServer equ    -174
 _LVOAllocMem    equ     -198
@@ -37,6 +40,12 @@ BPLCON2         equ     $104
 BPL1MOD         equ     $108
 COLOR00         equ     $180
 COLOR01         equ     $182
+
+ciaa_pra        equ     $bfe001
+ciaa_sdr        equ     $bfec01
+ciaa_icr        equ     $bfed01
+ciaa_cra        equ     $bfee01
+KEY_ESC         equ     $45
 
 SETCLR          equ     $8000
 INTB_VERTB      equ     5
@@ -116,11 +125,17 @@ start:
         move.w  d0,cop_bplptl+2-copper(a3)
         swap    d0
         move.w  d0,cop_bplpth+2-copper(a3)
+        lea     cop_color00+2-copper(a3),a0
+        move.l  a0,color00_word
 
-        ; 3. VERTB server cycles COLOR01
+        ; 3. VERTB server cycles COLOR01; PORTS server reads the keyboard
         moveq   #INTB_VERTB,d0
         lea     vb_int,a1
         jsr     _LVOAddIntServer(a6)
+        moveq   #INTB_PORTS,d0
+        lea     ports_int,a1
+        jsr     _LVOAddIntServer(a6)
+        move.b  #$88,ciaa_icr           ; SETCLR | SP: keyboard interrupts
 
         move.l  a3,COP1LC(a5)
         move.w  d0,COPJMP1(a5)
@@ -138,11 +153,18 @@ start:
         bne.s   .wait
         bra     fail
 .tick:
+        tst.b   quit
+        bne.s   .stop
         move.l  vb_count,d3
         cmp.l   d6,d3
         blo.s   .frame
+.stop:
 
         ; 5. Stop the display before freeing what it reads
+        move.b  #$08,ciaa_icr
+        moveq   #INTB_PORTS,d0
+        lea     ports_int,a1
+        jsr     _LVORemIntServer(a6)
         moveq   #INTB_VERTB,d0
         lea     vb_int,a1
         jsr     _LVORemIntServer(a6)
@@ -196,6 +218,35 @@ vb_server:
         add.w   d0,d0
         lea     colors,a5
         move.w  (a5,d0.w),COLOR01(a0)
+        ; The Copper sets COLOR00 every frame: change its list entry
+        move.l  color00_word,a5
+        move.w  #$0026,d0
+        btst    #6,ciaa_pra             ; /FIR0: left button, active low
+        bne.s   .up
+        move.w  #$0f00,d0
+.up:
+        move.w  d0,(a5)
+        moveq   #0,d0
+        rts
+
+; PORTS server: keyboard byte from CIA-A SDR, with the SPMODE handshake
+ports_server:
+        move.b  ciaa_icr,d0
+        btst    #3,d0
+        beq.s   .done
+        move.b  ciaa_sdr,d0
+        not.b   d0
+        ror.b   #1,d0                   ; keycode | up << 7
+        cmp.b   #KEY_ESC,d0
+        bne.s   .ack
+        st      quit
+.ack:
+        or.b    #$40,ciaa_cra
+        moveq   #20,d1
+.hold:
+        dbf     d1,.hold
+        and.b   #$bf,ciaa_cra
+.done:
         moveq   #0,d0
         rts
 
@@ -208,6 +259,7 @@ copper:
         dc.w    BPLCON1,$0000
         dc.w    BPLCON2,$0000
         dc.w    BPL1MOD,$0000
+cop_color00:
         dc.w    COLOR00,$0026
 cop_bplpth:
         dc.w    BPL1PTH,$0000
@@ -226,4 +278,9 @@ colors:
 vb_int:         dc.l    0,0
                 dc.b    NT_INTERRUPT,0
                 dc.l    0,vb_count,vb_server
+ports_int:      dc.l    0,0
+                dc.b    NT_INTERRUPT,0
+                dc.l    0,0,ports_server
 vb_count:       dc.l    0
+color00_word:   dc.l    0
+quit:           dc.b    0

@@ -157,6 +157,54 @@ static void present_frame(struct M68KEmuContext *ctx)
     }
 }
 
+/* ── Host input ───────────────────────────────────────────────────── */
+
+/*
+ * Queue a raw key (Amiga keycode, bit 7 set for key up). Rigel puts a key
+ * straight into CIA-A's serial register without the keyboard handshake
+ * (Rigel ISSUE-0016), so keys reach it one per frame from here.
+ */
+void M68KEmu_RigelInputKey(struct M68KEmuContext *ctx, UBYTE rawkey)
+{
+    if (!ctx || !ctx->rigel || ctx->key_count >= M68KEMU_KEY_QUEUE)
+        return;
+    ctx->key_queue[(ctx->key_head + ctx->key_count) % M68KEMU_KEY_QUEUE] = rawkey;
+    ctx->key_count++;
+}
+
+static void deliver_key(struct M68KEmuContext *ctx)
+{
+    UBYTE rawkey;
+
+    if (!ctx->key_count)
+        return;
+    rawkey = ctx->key_queue[ctx->key_head];
+    ctx->key_head = (ctx->key_head + 1) % M68KEMU_KEY_QUEUE;
+    ctx->key_count--;
+    rigel_keyboard_inject((RigelContext *)ctx->rigel, rawkey & 0x7f,
+                          (rawkey & 0x80) == 0);
+}
+
+/* Mouse movement on port 0, as the hardware's 8-bit wrapping counters */
+void M68KEmu_RigelInputMouse(struct M68KEmuContext *ctx, LONG dx, LONG dy)
+{
+    if (!ctx || !ctx->rigel)
+        return;
+    ctx->mouse_x = (UBYTE)(ctx->mouse_x + dx);
+    ctx->mouse_y = (UBYTE)(ctx->mouse_y + dy);
+    rigel_input_set_joydat((RigelContext *)ctx->rigel, 0,
+                           (rigel_u16)((ctx->mouse_y << 8) | ctx->mouse_x));
+}
+
+/* Left button is port 0 fire (CIA-A PRA bit 6), right is port 0 POTY */
+void M68KEmu_RigelInputButtons(struct M68KEmuContext *ctx, BOOL left, BOOL right)
+{
+    if (!ctx || !ctx->rigel)
+        return;
+    rigel_input_set_fire((RigelContext *)ctx->rigel, 0, left != FALSE);
+    rigel_input_set_pot_button_y((RigelContext *)ctx->rigel, 0, right != FALSE);
+}
+
 void M68KEmu_RigelStepCPU(struct M68KEmuContext *ctx,
                           unsigned long long cycles)
 {
@@ -166,8 +214,12 @@ void M68KEmu_RigelStepCPU(struct M68KEmuContext *ctx,
         return;
     result = rigel_step_cpu_cycles((RigelContext *)ctx->rigel,
                                    (rigel_u64)cycles);
-    if ((result.events & RIGEL_EVENT_FRAME_READY) && ctx->presenter.present)
-        present_frame(ctx);
+    if (result.events & RIGEL_EVENT_FRAME_READY)
+    {
+        deliver_key(ctx);
+        if (ctx->presenter.present)
+            present_frame(ctx);
+    }
 }
 
 void M68KEmu_RigelIntState(struct M68KEmuContext *ctx, UWORD *intena,

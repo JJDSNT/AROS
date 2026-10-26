@@ -193,6 +193,13 @@ void M68KEmu_HeapFree(struct M68KEmuContext *ctx, ULONG addr, ULONG size)
         heap_free_list(ctx, &ctx->heap_free, blk);
 }
 
+/* A split heap leaves the I/O space out of the Fast heap */
+static BOOL heap_has_io_hole(struct M68KEmuContext *ctx)
+{
+    return ctx->chip_end && ctx->chip_end < M68KEMU_IO_START &&
+           ctx->heap_end > M68KEMU_IO_END + M68KEMU_HEAP_MIN_SPLIT;
+}
+
 /*
  * Split a fresh heap at chip_end into a Chip and a Fast free list.
  * Must run before anything is allocated from the heap.
@@ -217,9 +224,20 @@ BOOL M68KEmu_HeapSplitChip(struct M68KEmuContext *ctx, ULONG chip_end)
     m68k_write32(ctx, ctx->heap_start,     chip_end - ctx->heap_start);
     m68k_write32(ctx, ctx->heap_start + 4, 0);
 
+    /* Fast heap: below and above the I/O space, which the chipset owns */
     ctx->heap_free = chip_end;
-    m68k_write32(ctx, chip_end,     ctx->heap_end - chip_end);
-    m68k_write32(ctx, chip_end + 4, 0);
+    if (heap_has_io_hole(ctx))
+    {
+        m68k_write32(ctx, chip_end,     M68KEMU_IO_START - chip_end);
+        m68k_write32(ctx, chip_end + 4, M68KEMU_IO_END);
+        m68k_write32(ctx, M68KEMU_IO_END,     ctx->heap_end - M68KEMU_IO_END);
+        m68k_write32(ctx, M68KEMU_IO_END + 4, 0);
+    }
+    else
+    {
+        m68k_write32(ctx, chip_end,     ctx->heap_end - chip_end);
+        m68k_write32(ctx, chip_end + 4, 0);
+    }
     return TRUE;
 }
 
@@ -251,6 +269,8 @@ ULONG M68KEmu_HeapAvail(struct M68KEmuContext *ctx, ULONG requirements)
             return ctx->heap_end - ctx->heap_start;
         chip = ctx->chip_end - ctx->heap_start;
         fast = ctx->heap_end - ctx->chip_end;
+        if (heap_has_io_hole(ctx))
+            fast -= M68KEMU_IO_END - M68KEMU_IO_START;
     }
     else
     {

@@ -5,8 +5,8 @@
 
     Opens a window on the default public screen at the first completed
     frame, copies every frame into it, paces the program to the chipset's
-    frame rate, and stops the program on the close gadget, Escape or
-    Ctrl-C.
+    frame rate, feeds the window's keyboard and mouse to the chipset, and
+    stops the program on the close gadget or Ctrl-C.
 */
 
 #include <aros/debug.h>
@@ -15,6 +15,7 @@
 #include <exec/io.h>
 #include <devices/timer.h>
 #include <dos/dos.h>
+#include <devices/inputevent.h>
 #include <intuition/intuition.h>
 #include <cybergraphx/cybergraphics.h>
 #include <proto/exec.h>
@@ -23,7 +24,6 @@
 
 #include "m68kemu_intern.h"
 
-#define RAWKEY_ESC          0x45
 #define RESYNC_FRAMES       5       /* drop pacing debt beyond this */
 
 /* Rigel frames are host ULONG 0x00RRGGBB (Rigel ISSUE-0010) */
@@ -39,6 +39,11 @@ struct M68KEmuDisplay
     BOOL                win_failed;
     ULONG               width;      /* frame size the window was sized for */
     ULONG               height;
+    BOOL                left;       /* mouse buttons as last sent */
+    BOOL                right;
+    BOOL                have_mouse; /* mouse_x/y hold a position */
+    WORD                mouse_x;
+    WORD                mouse_y;
     struct MsgPort     *timer_port;
     struct timerequest *timer_req;
     BOOL                timer_open;
@@ -104,11 +109,12 @@ static void pace(struct M68KEmuDisplay *d, ULONG frame_us)
     tv_add_us(&d->next, frame_us);
 }
 
-/* FALSE when the user asked the program to stop */
-static BOOL handle_input(struct M68KEmuDisplay *d)
+/* Feed window input to the chipset; FALSE when the user asked to stop */
+static BOOL handle_input(struct M68KEmuContext *ctx, struct M68KEmuDisplay *d)
 {
     struct IntuiMessage *msg;
     BOOL keep = TRUE;
+    BOOL left = d->left, right = d->right;
 
     if (SetSignal(0, SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C)
         keep = FALSE;
@@ -117,11 +123,39 @@ static BOOL handle_input(struct M68KEmuDisplay *d)
         return keep;
     while ((msg = (struct IntuiMessage *)GetMsg(d->win->UserPort)))
     {
-        if (msg->Class == IDCMP_CLOSEWINDOW)
+        switch (msg->Class)
+        {
+        case IDCMP_CLOSEWINDOW:
             keep = FALSE;
-        else if (msg->Class == IDCMP_RAWKEY && msg->Code == RAWKEY_ESC)
-            keep = FALSE;
+            break;
+        case IDCMP_RAWKEY:
+            /* Amiga raw keycodes; the chipset sees no auto-repeat */
+            if (!(msg->Qualifier & IEQUALIFIER_REPEAT))
+                M68KEmu_RigelInputKey(ctx, (UBYTE)msg->Code);
+            break;
+        case IDCMP_MOUSEBUTTONS:
+            if (msg->Code == SELECTDOWN)    left = TRUE;
+            else if (msg->Code == SELECTUP) left = FALSE;
+            else if (msg->Code == MENUDOWN) right = TRUE;
+            else if (msg->Code == MENUUP)   right = FALSE;
+            break;
+        case IDCMP_MOUSEMOVE:
+            if (d->have_mouse)
+                M68KEmu_RigelInputMouse(ctx, msg->MouseX - d->mouse_x,
+                                        msg->MouseY - d->mouse_y);
+            d->mouse_x = msg->MouseX;
+            d->mouse_y = msg->MouseY;
+            d->have_mouse = TRUE;
+            break;
+        }
         ReplyMsg((struct Message *)msg);
+    }
+
+    if (left != d->left || right != d->right)
+    {
+        M68KEmu_RigelInputButtons(ctx, left, right);
+        d->left = left;
+        d->right = right;
     }
     return keep;
 }
@@ -155,7 +189,9 @@ static BOOL display_present(struct M68KEmuContext *ctx,
             WA_Title,       (IPTR)"m68kemu: Rigel display",
             WA_InnerWidth,  frame->width,
             WA_InnerHeight, frame->height,
-            WA_IDCMP,       IDCMP_CLOSEWINDOW | IDCMP_RAWKEY,
+            WA_IDCMP,       IDCMP_CLOSEWINDOW | IDCMP_RAWKEY |
+                            IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE,
+            WA_ReportMouse, TRUE,
             WA_CloseGadget, TRUE,
             WA_DragBar,     TRUE,
             WA_DepthGadget, TRUE,
@@ -196,7 +232,7 @@ static BOOL display_present(struct M68KEmuContext *ctx,
                         FRAME_RECTFMT);
     }
 
-    if (!handle_input(d))
+    if (!handle_input(ctx, d))
         return FALSE;
     pace(d, frame->frame_us);
     return TRUE;

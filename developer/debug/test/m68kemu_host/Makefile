@@ -10,7 +10,8 @@ RIGEL_CPPFLAGS = -DM68KEMU_WITH_RIGEL=1 -Istubs \
                  -I$(ROOT)/rom/m68kemu/Rigel/include
 
 TESTS = test_m68kemu test_moira_exec test_hello_thunks test_rigel_integration \
-        test_rigel_chip_irq test_rigel_exec_irq test_rigel_display
+        test_rigel_chip_irq test_rigel_exec_irq test_rigel_display \
+        test_rigel_input
 
 all: $(TESTS)
 
@@ -50,6 +51,9 @@ test_rigel_exec_irq: test_rigel_exec_irq.cpp m68k/rigel_exec_irq_hunk.h m68kemu_
 test_rigel_display: test_rigel_display.cpp m68k/rigel_display_hunk.h m68kemu_rigel_host.o $(RIGEL_LIB)
 	$(CXX) $(CXXFLAGS) $(RIGEL_CPPFLAGS) -o $@ $< m68kemu_rigel_host.o $(RIGEL_LIB)
 
+test_rigel_input: test_rigel_input.cpp m68k/rigel_input_hunk.h m68kemu_rigel_host.o $(RIGEL_LIB)
+	$(CXX) $(CXXFLAGS) $(RIGEL_CPPFLAGS) -o $@ $< m68kemu_rigel_host.o $(RIGEL_LIB)
+
 # The 68k fixtures are committed so "make test" needs no m68k toolchain.
 # Regenerating them needs vasm (docker pull amigadev/crosstools:m68k-amigaos).
 fixtures:
@@ -61,7 +65,9 @@ fixtures:
 	python3 m68k/bin_to_header.py m68k/rigel_exec_irq.hunk m68k/rigel_exec_irq_hunk.h rigel_exec_irq_hunk
 	$(M68K) vasmm68k_mot -Fhunkexe -quiet -o m68k/rigel_display.hunk m68k/rigel_display.s
 	python3 m68k/bin_to_header.py m68k/rigel_display.hunk m68k/rigel_display_hunk.h rigel_display_hunk
-	rm -f m68k/rigel_chip_irq.hunk m68k/rigel_chip_irq_short.hunk m68k/rigel_exec_irq.hunk m68k/rigel_display.hunk
+	$(M68K) vasmm68k_mot -Fhunkexe -quiet -o m68k/rigel_input.hunk m68k/rigel_input.s
+	python3 m68k/bin_to_header.py m68k/rigel_input.hunk m68k/rigel_input_hunk.h rigel_input_hunk
+	rm -f m68k/rigel_chip_irq.hunk m68k/rigel_chip_irq_short.hunk m68k/rigel_exec_irq.hunk m68k/rigel_display.hunk m68k/rigel_input.hunk
 
 test: all
 	./test_m68kemu
@@ -71,6 +77,7 @@ test: all
 	./test_rigel_chip_irq
 	./test_rigel_exec_irq
 	./test_rigel_display
+	./test_rigel_input
 
 clean:
 	rm -f $(TESTS) m68kemu_rigel_host.o

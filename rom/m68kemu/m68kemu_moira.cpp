@@ -127,14 +127,26 @@ public:
             (unsigned long)userFunc, (unsigned long)ret_addr);
     }
 
+    /* With Rigel the whole classic I/O space belongs to the chipset;
+       unmapped addresses there read 0 and ignore writes */
+    bool rigelIO(u32 addr) const
+    {
+#ifdef M68KEMU_WITH_RIGEL
+        return ctx->rigel && addr >= M68KEMU_IO_START && addr < M68KEMU_IO_END;
+#else
+        (void)addr;
+        return false;
+#endif
+    }
+
     u8 read8(u32 addr) const override
     {
 #ifdef M68KEMU_WITH_RIGEL
-        if (ctx->rigel && (addr & CUSTOM_MASK) == CUSTOM_BASE)
+        if (rigelIO(addr))
         {
             ULONG value = 0;
-            if (M68KEmu_RigelRead(ctx, addr, 1, &value))
-                return (u8)value;
+            (void)M68KEmu_RigelRead(ctx, addr, 1, &value);
+            return (u8)value;
         }
 #endif
         if ((addr & CUSTOM_MASK) == CUSTOM_BASE)
@@ -153,47 +165,46 @@ public:
             const_cast<AROSMoira*>(this)->ctx->running = FALSE;
             return M68K_OP_STOP;
         }
-        if ((addr & CUSTOM_MASK) == CUSTOM_BASE)
-        {
 #ifdef M68KEMU_WITH_RIGEL
-            if (ctx->rigel)
-            {
-                ULONG value = 0;
-                if (M68KEmu_RigelRead(ctx, addr, 2, &value))
-                    return (u16)value;
-            }
-#endif
-            return customRead16(addr & 0xFFE);
+        if (rigelIO(addr))
+        {
+            ULONG value = 0;
+            (void)M68KEmu_RigelRead(ctx, addr, 2, &value);
+            return (u16)value;
         }
+#endif
+        if ((addr & CUSTOM_MASK) == CUSTOM_BASE)
+            return customRead16(addr & 0xFFE);
         if (addr + 1 >= ctx->mem_size) return 0;
         return ((u16)ctx->mem[addr] << 8) | ctx->mem[addr + 1];
     }
 
     void write8(u32 addr, u8 val) const override
     {
-        if ((addr & CUSTOM_MASK) == CUSTOM_BASE)
-        {
 #ifdef M68KEMU_WITH_RIGEL
-            if (ctx->rigel)
-                (void)M68KEmu_RigelWrite(ctx, addr, 1, val);
-#endif
+        if (rigelIO(addr))
+        {
+            (void)M68KEmu_RigelWrite(ctx, addr, 1, val);
             return;
         }
+#endif
+        if ((addr & CUSTOM_MASK) == CUSTOM_BASE)
+            return;
         if (addr >= ctx->mem_size) return;
         ctx->mem[addr] = val;
     }
 
     void write16(u32 addr, u16 val) const override
     {
+#ifdef M68KEMU_WITH_RIGEL
+        if (rigelIO(addr))
+        {
+            (void)M68KEmu_RigelWrite(ctx, addr, 2, val);
+            return;
+        }
+#endif
         if ((addr & CUSTOM_MASK) == CUSTOM_BASE)
         {
-#ifdef M68KEMU_WITH_RIGEL
-            if (ctx->rigel)
-            {
-                (void)M68KEmu_RigelWrite(ctx, addr, 2, val);
-                return;
-            }
-#endif
             customWrite16(addr & 0xFFE, val);
             return;
         }
