@@ -13,7 +13,25 @@
 
 #include "m68kemu_intern.h"
 
-#define M68KEMU_RIGEL_CHIP_RAM_SIZE (512UL * 1024UL)
+#define M68KEMU_RIGEL_CHIP_RAM_SIZE M68KEMU_CHIP_RAM_SIZE
+
+/* Contained default autovector handlers, in the unused user-vector area
+   after the LINEA RTE and Supervisor() trampoline (0x100-0x10B). */
+#define M68KEMU_RIGEL_IRQ_STUBS     0x000110UL
+#define M68KEMU_RIGEL_IRQ_STUB_SIZE 10UL
+#define M68KEMU_AUTOVECTOR(level)   (0x60UL + 4UL * (level))
+#define M68KEMU_CUSTOM_INTREQ       0x00dff09cUL
+
+/* INTREQ bits that Paula maps to IPL levels 1-6 */
+static const UWORD rigel_level_intreq[7] = {
+    0x0000,
+    0x0007, /* 1: TBE, DSKBLK, SOFT */
+    0x0008, /* 2: PORTS */
+    0x0070, /* 3: COPER, VERTB, BLIT */
+    0x0780, /* 4: AUD0-3 */
+    0x1800, /* 5: RBF, DSKSYNC */
+    0x2000  /* 6: EXTER */
+};
 
 static void *rigel_alloc(size_t size, void *opaque)
 {
@@ -54,6 +72,10 @@ BOOL M68KEmu_RigelInit(struct M68KEmuContext *ctx)
     if (ctx->rigel)
         return TRUE;
 
+    /* DMA clients need MEMF_CHIP to land inside Rigel's Chip RAM window */
+    if (!M68KEmu_HeapSplitChip(ctx, M68KEMU_RIGEL_CHIP_RAM_SIZE))
+        return FALSE;
+
     config.alloc_fn = rigel_alloc;
     config.free_fn = rigel_free;
     config.chip_ram_size = M68KEMU_RIGEL_CHIP_RAM_SIZE;
@@ -65,6 +87,36 @@ BOOL M68KEmu_RigelInit(struct M68KEmuContext *ctx)
 
     ctx->rigel = (APTR)rigel_create(&config);
     return ctx->rigel != NULL;
+}
+
+/*
+ * Give every unset level 1-6 autovector a handler that acknowledges that
+ * level's INTREQ bits and returns, so an enabled interrupt without a 68k
+ * handler is dropped instead of jumping to address 0. Level 7 (NMI) just
+ * returns. Vectors the program installs later replace these.
+ */
+void M68KEmu_RigelInstallVectors(struct M68KEmuContext *ctx, ULONG rte_addr)
+{
+    ULONG level;
+
+    if (!ctx || !ctx->rigel)
+        return;
+
+    for (level = 1; level <= 6; level++)
+    {
+        ULONG stub = M68KEMU_RIGEL_IRQ_STUBS +
+                     (level - 1) * M68KEMU_RIGEL_IRQ_STUB_SIZE;
+
+        m68k_write16(ctx, stub,     0x33fc);   /* MOVE.W #mask,(abs).L */
+        m68k_write16(ctx, stub + 2, rigel_level_intreq[level]);
+        m68k_write32(ctx, stub + 4, M68KEMU_CUSTOM_INTREQ);
+        m68k_write16(ctx, stub + 8, 0x4e73);   /* RTE */
+
+        if (!m68k_read32(ctx, M68KEMU_AUTOVECTOR(level)))
+            m68k_write32(ctx, M68KEMU_AUTOVECTOR(level), stub);
+    }
+    if (!m68k_read32(ctx, M68KEMU_AUTOVECTOR(7)))
+        m68k_write32(ctx, M68KEMU_AUTOVECTOR(7), rte_addr);
 }
 
 void M68KEmu_RigelDestroy(struct M68KEmuContext *ctx)

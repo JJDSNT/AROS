@@ -231,6 +231,9 @@
 #define HUNK_RELOC32                0x3EC
 #define HUNK_END                    0x3F2
 #define HUNK_TYPE_MASK              0x3FFFFFFF
+#define HUNK_MEMF_CHIP              0x40000000UL  /* HUNKF_CHIP in a size word */
+#define HUNK_MEMF_FAST              0x80000000UL  /* HUNKF_FAST in a size word */
+#define HUNK_MEMF_MASK              0xC0000000UL  /* both: attribute long follows */
 
 /* ── Function table terminator ───────────────────────────────────── */
 

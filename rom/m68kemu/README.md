@@ -122,7 +122,7 @@ and native AROS C functions. There are two kinds:
 - **Manual thunks** (~100) for functions needing special handling:
   - **exec**: `OpenLibrary` (fake base creation + m68k library fallback),
     `AllocMem`/`FreeMem`/`AllocVec`/`FreeVec` (containment heap),
-    `CreatePool`/`AllocPooled`/`FreePooled` (fake pool handle),
+    `CreatePool`/`AllocPooled`/`FreePooled` (handle keeps requirements),
     `FindTask` (Process shadow with pr_CLI), `RawDoFmt` (custom %s/%d),
     `WaitPort`/`GetMsg`/`ReplyMsg` (IDCMP shadow management),
     `Supervisor` (68020 exception frame trampoline),
@@ -303,20 +303,22 @@ within the emulator.
 
 - The default chipset fallback does not deliver interrupts and returns zero for
   INTREQR/INTENA
-- Rigel builds publish IPL at instruction boundaries; native Exec interrupt
-  server bridging is not implemented
+- Rigel builds publish IPL at instruction boundaries and deliver it to
+  contained 68k autovector handlers; native Exec interrupt server bridging is
+  not implemented
 - Single-threaded: one m68k instruction at a time
 
 ### Memory
 
 - Fixed 32 MB containment, fixed 64 KB stack (RunHunk ignores stackSize parameter)
-- No MEMF_CHIP/MEMF_FAST distinction (requirements parameter ignored)
+- MEMF_CHIP/MEMF_FAST are honored only with Rigel (split 512 KiB Chip heap);
+  otherwise the requirements are ignored apart from MEMF_CLEAR
 - No memory protection within containment
 
 ### Thunks
 
 - `RawDoFmt` only handles %s, %d, and %ld; other specifiers get basic fallback
-- `CreatePool` returns fake handle; pool semantics not preserved
+- Pools allocate straight from the heap; `DeletePool` does not free pooled blocks
 - `Forbid`/`Permit`/semaphores are no-ops (single-threaded assumption)
 
 ### Device I/O
@@ -429,6 +431,8 @@ grep -oP '(OFF|SIZ)\|[^"]*' m68k.s | sed 's/#//g' > m68k_offsets.txt
 | `developer/debug/test/m68kemu_host/test_moira_exec.cpp` | Host-side Moira execution tests: MOVEQ/RTS, ADD, loops, memory access |
 | `developer/debug/test/m68kemu_host/test_hello_thunks.cpp` | Host-side end-to-end: A-line trap → thunk dispatch → return |
 | `developer/debug/test/m68kemu_host/test_rigel_integration.cpp` | Moira + native LVO + Rigel MMIO/timing/shared Chip RAM proof |
+| `developer/debug/test/m68kemu_host/test_rigel_chip_irq.cpp` | Rigel milestone 2: Chip/Fast heap, Hunk memory attributes, Blitter interrupt to a 68k autovector handler |
+| `developer/debug/test/m68kemu_host/m68k/rigel_chip_irq.s` | vasm source of that test's Hunk executable (`make fixtures` regenerates the header) |
 | `developer/debug/test/m68kemu/test_m68kemu.c` | AROS-side test: opens m68kemu.library (execution test incomplete) |
 
 ## Building

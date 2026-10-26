@@ -190,7 +190,7 @@ static IPTR thunk_exec_CacheClearU(struct M68KEmuContext *ctx, void *cpu) { retu
 /* -534: TypeOfMem(A1=address) -> D0=attributes */
 static IPTR thunk_exec_TypeOfMem(struct M68KEmuContext *ctx, void *cpu)
 {
-    return MEMF_PUBLIC; /* everything is public in containment */
+    return M68KEmu_HeapTypeOf(ctx, THUNK_A(1));
 }
 
 
@@ -386,15 +386,21 @@ static IPTR thunk_exec_RemPort(struct M68KEmuContext *ctx, void *cpu) { return 0
 /* -696: CreatePool(D0=requirements, D1=puddleSize, D2=threshSize) -> D0=pool */
 static IPTR thunk_exec_CreatePool(struct M68KEmuContext *ctx, void *cpu)
 {
-    /* Return a fake non-zero pool handle — we use the containment heap for everything */
-    return 0x00CAFE00;
+    /* Pools allocate straight from the containment heap; the handle only
+       remembers the requirements so MEMF_CHIP pools stay in Chip RAM. */
+    ULONG pool = M68KEmu_HeapAlloc(ctx, 4, 0);
+    if (pool)
+        m68k_write32(ctx, pool, THUNK_D(0));
+    return (IPTR)pool;
 }
 
 /* -708: AllocPooled(A0=poolHeader, D0=memSize) -> D0=memory */
 static IPTR thunk_exec_AllocPooled(struct M68KEmuContext *ctx, void *cpu)
 {
+    ULONG pool = THUNK_A(0);
     ULONG size = THUNK_D(0);
-    return (IPTR)M68KEmu_HeapAlloc(ctx, size, 0);
+    ULONG reqs = pool ? m68k_read32(ctx, pool) : 0;
+    return (IPTR)M68KEmu_HeapAlloc(ctx, size, reqs);
 }
 
 /* -714: FreePooled(A0=poolHeader, A1=memory, D0=memSize) */
@@ -409,14 +415,18 @@ static IPTR thunk_exec_FreePooled(struct M68KEmuContext *ctx, void *cpu)
 /* -720: DeletePool(A0=poolHeader) */
 static IPTR thunk_exec_DeletePool(struct M68KEmuContext *ctx, void *cpu)
 {
-    return 0; /* no-op — containment heap is freed when context is destroyed */
+    /* Pooled blocks stay allocated until the context is destroyed */
+    ULONG pool = THUNK_A(0);
+    if (pool) M68KEmu_HeapFree(ctx, pool, 4);
+    return 0;
 }
 
 /* -684: AllocVec(D0=byteSize, D1=requirements) -> D0=memory */
 static IPTR thunk_exec_AllocVec(struct M68KEmuContext *ctx, void *cpu)
 {
     ULONG size = THUNK_D(0);
-    return (IPTR)M68KEmu_HeapAlloc(ctx, size, 0);
+    ULONG reqs = THUNK_D(1);
+    return (IPTR)M68KEmu_HeapAlloc(ctx, size, reqs);
 }
 
 /* -690: FreeVec(A1=memoryBlock) */
@@ -430,7 +440,10 @@ static IPTR thunk_exec_FreeVec(struct M68KEmuContext *ctx, void *cpu)
 /* -216: AvailMem(D1=requirements) -> D0=size */
 static IPTR thunk_exec_AvailMem(struct M68KEmuContext *ctx, void *cpu)
 {
-    return ctx->heap_end - ctx->heap_start;
+    /* Unsplit heap: keep the historical "heap span" answer */
+    if (!ctx->chip_end)
+        return ctx->heap_end - ctx->heap_start;
+    return M68KEmu_HeapAvail(ctx, THUNK_D(1));
 }
 
 

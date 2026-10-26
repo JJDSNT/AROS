@@ -355,6 +355,9 @@ LONG M68KEmu_Execute(struct M68KEmuContext *ctx)
 #ifdef M68KEMU_WITH_RIGEL
     if (ctx->rigel)
     {
+        /* Run like an ordinary Amiga program: interrupts unmasked. The
+           CPU stays in supervisor mode as in the non-Rigel path. */
+        cpu.setSR(cpu.getSR() & ~0x0700);
         M68KEmu_RigelStepCPU(ctx, (unsigned long long)cpu.getClock());
         cpu.setIPL(M68KEmu_RigelIPL(ctx));
     }
@@ -365,6 +368,10 @@ LONG M68KEmu_Execute(struct M68KEmuContext *ctx)
 
     /* Write RTE at RTE_ADDR for LINEA exception return */
     m68k_write16(ctx, RTE_ADDR, M68K_OP_RTE);
+
+#ifdef M68KEMU_WITH_RIGEL
+    M68KEmu_RigelInstallVectors(ctx, RTE_ADDR);
+#endif
 
     /* Supervisor trampoline at SV_TRAMP_ADDR:
        ADDQ.L #8,SP   (508F)  — skip Moira's 68020 exception frame

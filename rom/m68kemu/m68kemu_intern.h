@@ -25,6 +25,10 @@ struct M68KEmuLibBase
 #define M68KEMU_HEAP_BASE       0x010400
 #define M68KEMU_STACK_SIZE      (64 * 1024)
 
+/* Chip RAM window shared with Rigel DMA. Only used when a context enables
+   the split Chip/Fast heap (Rigel mode); otherwise there is one heap. */
+#define M68KEMU_CHIP_RAM_SIZE   (512UL * 1024UL)
+
 #ifndef M68KEMU_RUN_RIGEL
 #define M68KEMU_RUN_RIGEL       (1UL << 0)
 #endif
@@ -69,7 +73,12 @@ struct M68KEmuContext
 
     ULONG   heap_start;
     ULONG   heap_end;
-    ULONG   heap_free;
+    ULONG   heap_free;          /* free list: Fast heap, or the only heap */
+
+    /* Split Chip/Fast heap. chip_end == 0 means a single unsplit heap and
+       MEMF_CHIP/MEMF_FAST are ignored (legacy behavior). */
+    ULONG   chip_end;
+    ULONG   chip_free;          /* free list: Chip heap [heap_start, chip_end) */
 
     ULONG   entry_point;
     ULONG   seg_start;
@@ -181,6 +190,9 @@ void   M68KEmu_DestroyContext(struct M68KEmuContext *ctx);
 LONG   M68KEmu_Execute(struct M68KEmuContext *ctx);
 ULONG  M68KEmu_HeapAlloc(struct M68KEmuContext *ctx, ULONG size, ULONG requirements);
 void   M68KEmu_HeapFree(struct M68KEmuContext *ctx, ULONG addr, ULONG size);
+BOOL   M68KEmu_HeapSplitChip(struct M68KEmuContext *ctx, ULONG chip_end);
+ULONG  M68KEmu_HeapAvail(struct M68KEmuContext *ctx, ULONG requirements);
+ULONG  M68KEmu_HeapTypeOf(struct M68KEmuContext *ctx, ULONG addr);
 ULONG  M68KEmu_LoadHunks(struct M68KEmuContext *ctx, BPTR segList);
 ULONG  M68KEmu_LoadHunksFromMemory(struct M68KEmuContext *ctx, UBYTE *data, LONG size);
 ULONG  M68KEmu_LoadM68KLibrary(struct M68KEmuContext *ctx, const char *name);
@@ -201,6 +213,7 @@ void   M68KEmu_AutoOpenLibs(struct M68KEmuContext *ctx);
 #ifdef M68KEMU_WITH_RIGEL
 BOOL   M68KEmu_RigelInit(struct M68KEmuContext *ctx);
 void   M68KEmu_RigelDestroy(struct M68KEmuContext *ctx);
+void   M68KEmu_RigelInstallVectors(struct M68KEmuContext *ctx, ULONG rte_addr);
 BOOL   M68KEmu_RigelRead(struct M68KEmuContext *ctx, ULONG addr,
                          UBYTE size, ULONG *value);
 BOOL   M68KEmu_RigelWrite(struct M68KEmuContext *ctx, ULONG addr,

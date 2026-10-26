@@ -56,7 +56,12 @@ write.
 - **Header**: 8 bytes in containment memory (big-endian ULONG size + ULONG next)
 - **Splitting**: If remainder ≥ 16 bytes after allocation; allocates from the END of the free block
 - **Free**: Address-ordered insertion into free list with coalescing
-- **No MEMF_CHIP/MEMF_FAST**: The `requirements` parameter is ignored
+- **MEMF_CLEAR**: honored; zeroes the returned block
+- **Chip/Fast split (Rigel mode only)**: `M68KEmu_HeapSplitChip()` turns the
+  fresh heap into a Chip free list below `M68KEMU_CHIP_RAM_SIZE` (512 KiB) and
+  a Fast free list above it. `MEMF_CHIP` uses only Chip, `MEMF_FAST` only Fast,
+  anything else prefers Fast and falls back to Chip. Without the split the
+  `requirements` parameter is ignored apart from `MEMF_CLEAR`
 
 ### Limits
 
@@ -162,7 +167,7 @@ before `lib->gen_thunks[]` (generated).
 | -138 | Permit | No-op (single-threaded) |
 | -198 | AllocMem | Containment heap allocation |
 | -210 | FreeMem | Containment heap free |
-| -216 | AvailMem | Returns heap_end - heap_start |
+| -216 | AvailMem | Split heap: free bytes per `MEMF_CHIP`/`MEMF_FAST`/`MEMF_LARGEST`/`MEMF_TOTAL`; otherwise heap_end - heap_start |
 | -276 | FindName | Shadow-aware; returns fake lib base for NT_LIBRARY/NT_DEVICE |
 | -294 | FindTask | Creates 228-byte Process shadow, sets pr_CLI for CLI detection |
 | -306 | SetSignal | Pass-through to native |
@@ -174,19 +179,19 @@ before `lib->gen_thunks[]` (generated).
 | -408 | OldOpenLibrary | Delegates to OpenLibrary |
 | -414 | CloseLibrary | No-op for fake libs |
 | -522 | RawDoFmt | Custom implementation: %s (m68k pointer translation), %d (16-bit), %ld (32-bit) |
-| -534 | TypeOfMem | Returns MEMF_PUBLIC always |
+| -534 | TypeOfMem | MEMF_PUBLIC, plus MEMF_CHIP/MEMF_FAST by address with a split heap |
 | -552 | OpenLibrary | Creates fake base + registers thunks; falls back to m68k library loader |
 | -558 | InitSemaphore | No-op |
 | -564 | ObtainSemaphore | No-op |
 | -570 | ReleaseSemaphore | No-op |
 | -624 | CopyMem | Direct memcpy in containment |
 | -636 | CacheClearU | No-op |
-| -684 | AllocVec | Containment heap allocation |
+| -684 | AllocVec | Containment heap allocation (honors requirements) |
 | -690 | FreeVec | Containment heap free |
-| -696 | CreatePool | Returns fake handle 0x00CAFE00 |
-| -708 | AllocPooled | Containment heap allocation |
+| -696 | CreatePool | 4-byte handle in containment holding the pool requirements |
+| -708 | AllocPooled | Containment heap allocation with the pool's requirements |
 | -714 | FreePooled | Containment heap free |
-| -720 | DeletePool | No-op |
+| -720 | DeletePool | Frees the handle; pooled blocks live until the context ends |
 | -852 | AVL_AddNode | No-op stub |
 | -858 | AVL_RemNodeByAddress | No-op stub |
 | -864 | AVL_FindNode | No-op stub |

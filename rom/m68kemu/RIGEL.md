@@ -50,8 +50,24 @@ publish a license before this integration can be distributed.
   CCK and retains fractional cycles.
 - **Interrupt level:** Rigel's IPL is applied with `Moira::setIPL()` before the
   next instruction.
-- **Compatibility:** Hunk loading, containment, fake library bases, and native
-  LVO dispatch use the existing paths unchanged.
+- **Chip RAM allocation:** enabling Rigel splits the fresh containment heap
+  at 512 KiB into a Chip free list (`0x10400`-`0x7ffff`) and a Fast free list
+  (512 KiB up to the stack). Emulated `AllocMem()`, `AllocVec()` and pools
+  honor `MEMF_CHIP`, `MEMF_FAST` and `MEMF_CLEAR`; `MEMF_CHIP` never falls
+  back to Fast. `TypeOfMem()` and `AvailMem()` report the split.
+- **Hunk memory attributes:** `RunFileEx()` honors `HUNKF_CHIP`, `HUNKF_FAST`
+  and the extended attribute longword in the Hunk header, and clears every
+  hunk. `RunHunkEx()` receives an already loaded segment list whose
+  attributes `LoadSeg()` has consumed, so its hunks are placed in Fast.
+- **Interrupts:** in Rigel mode the program starts in supervisor mode with the
+  interrupt mask at 0, like an ordinary Amiga program with interrupts
+  enabled. Unset level 1-6 autovectors point to contained stubs that
+  acknowledge that level's `INTREQ` bits and `RTE`, so an interrupt enabled
+  without a handler is dropped rather than jumping to address 0. Programs
+  install their own handlers by writing the autovector.
+- **Compatibility:** without `M68KEMU_RUN_RIGEL` the heap is not split, the
+  mask stays at 7, and Hunk loading, containment, fake library bases, and
+  native LVO dispatch behave as before.
 
 Timing is instruction-boundary accurate with the current M68040 Moira setup;
 it is not synchronized to an individual bus access within an instruction.
@@ -69,9 +85,27 @@ make test
 programs Rigel's Blitter through custom MMIO, and copies a word between two
 addresses in shared Chip RAM while chipset time advances from Moira cycles.
 
+`test_rigel_chip_irq` is the milestone 2 acceptance test. It checks the
+Chip/Fast heap and Hunk attribute placement directly, then runs
+`m68k/rigel_chip_irq.s`, a real Hunk executable with `bss_c` and `data_f`
+sections, which follows the acceptance steps below and returns the failing
+step number in `D0`. Rigel state is inspected only through its public API.
+
+The assembled program is committed as `m68k/rigel_chip_irq_hunk.h`, so the
+suite needs no m68k toolchain. After editing the source, regenerate it with
+vasm from the `amigadev/crosstools:m68k-amigaos` Docker image through
+Rigel's `scripts/m68k` wrapper:
+
+```sh
+make fixtures
+```
+
 ## Milestone 2: Chip RAM allocation and interrupts
 
-The next milestone makes DMA and chipset interrupts usable by ordinary
+Status: implemented; `test_rigel_chip_irq` passes with the legacy host tests
+unchanged.
+
+This milestone makes DMA and chipset interrupts usable by ordinary
 contained 68k applications. It remains below the level of a complete Amiga
 machine or native presentation backend.
 
@@ -109,20 +143,26 @@ non-Rigel host tests continue to pass unchanged.
 
 ## Remaining work
 
-- **Chip RAM allocation:** `AllocMem()` and Hunk memory attributes still ignore
-  `MEMF_CHIP`; callers must currently use addresses in the 512 KiB Chip RAM
-  window deliberately. Split Chip/Fast allocation is required for general
-  applications.
+- **Short Hunk relocations:** the m68kemu Hunk loader handles only
+  `HUNK_RELOC32` and stops at any other block. vasm, vlink and current
+  compilers emit `HUNK_RELOC32SHORT` / `HUNK_DREL32` by default (the test
+  fixture uses `-kick1hunks` to avoid them), and AROS `LoadSeg()` accepts
+  both. Supporting them, plus `HUNK_RELRELOC32`, is needed for general
+  third-party executables.
+- **Segment-list attributes:** `RunHunkEx()` cannot recover `HUNKF_CHIP`
+  from a segment list; a caller that needs Chip hunks must use `RunFileEx()`.
 - **Copper:** Rigel implements Copper execution and DMA, but the AROS bridge has
   no focused Copper-list integration test yet.
-- **Blitter and DMA:** the one-word Blitter proof works. CPU bus stalls and
-  `BLTPRI` arbitration are not yet applied to Moira, and other DMA engines need
-  bridge-level tests.
-- **Interrupts:** IPL propagation is present. A contained 68k autovector test
-  and policy for native Exec interrupt servers are still missing.
+- **Blitter and DMA:** CPU bus stalls and `BLTPRI` arbitration are not yet
+  applied to Moira, and other DMA engines need bridge-level tests.
+- **Interrupts:** contained 68k autovector handlers work. Native Exec
+  interrupt servers (`AddIntServer()`, `SetIntVector()`) are not bridged to
+  Rigel, and CIA interrupt sources are not forwarded.
 - **Video:** Rigel exposes completed frames and scanlines; no AROS graphics
   presentation backend consumes them yet.
 - **Audio:** Rigel exposes mixed Paula samples; no AHI/native audio backend is
   connected yet.
 - **Input, CIA, RTC, disk, and serial:** Rigel has APIs for these domains, but
-  the initial bridge intentionally forwards only custom-register space.
+  the bridge forwards only custom-register space.
+- **Rigel headers:** the public headers have no `extern "C"` guards, so C++
+  callers wrap the include themselves.

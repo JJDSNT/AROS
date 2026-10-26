@@ -1,4 +1,7 @@
+*.dSYM
+*.o
+test_hello_thunks
 test_m68kemu
 test_moira_exec
-test_hello_thunks
-*.dSYM
+test_rigel_chip_irq
+test_rigel_integration

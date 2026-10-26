@@ -62,7 +62,8 @@ void M68KEmu_DestroyContext(struct M68KEmuContext *ctx)
     FreeMem(ctx, sizeof(struct M68KEmuContext));
 }
 
-ULONG M68KEmu_HeapAlloc(struct M68KEmuContext *ctx, ULONG size, ULONG requirements)
+/* First-fit allocation from one address-ordered free list. */
+static ULONG heap_alloc_list(struct M68KEmuContext *ctx, ULONG *head, ULONG size)
 {
     ULONG needed, prev, cur;
 
@@ -70,7 +71,7 @@ ULONG M68KEmu_HeapAlloc(struct M68KEmuContext *ctx, ULONG size, ULONG requiremen
     needed = size + M68KEMU_HEAP_HDR;  /* header */
 
     prev = 0;
-    cur  = ctx->heap_free;
+    cur  = *head;
 
     while (cur)
     {
@@ -95,7 +96,7 @@ ULONG M68KEmu_HeapAlloc(struct M68KEmuContext *ctx, ULONG size, ULONG requiremen
                 if (prev)
                     m68k_write32(ctx, prev + 4, blk_next);
                 else
-                    ctx->heap_free = blk_next;
+                    *head = blk_next;
                 m68k_write32(ctx, cur, needed);
                 return cur + M68KEMU_HEAP_HDR;
             }
@@ -106,18 +107,15 @@ ULONG M68KEmu_HeapAlloc(struct M68KEmuContext *ctx, ULONG size, ULONG requiremen
     return 0;
 }
 
-void M68KEmu_HeapFree(struct M68KEmuContext *ctx, ULONG addr, ULONG size)
+static void heap_free_list(struct M68KEmuContext *ctx, ULONG *head, ULONG blk)
 {
-    ULONG blk, blk_size, prev, cur;
+    ULONG blk_size, prev, cur;
 
-    if (!addr) return;
-
-    blk      = addr - M68KEMU_HEAP_HDR;
     blk_size = m68k_read32(ctx, blk);
 
     /* Insert in address order */
     prev = 0;
-    cur  = ctx->heap_free;
+    cur  = *head;
     while (cur && cur < blk)
     {
         prev = cur;
@@ -130,7 +128,7 @@ void M68KEmu_HeapFree(struct M68KEmuContext *ctx, ULONG addr, ULONG size)
     if (prev)
         m68k_write32(ctx, prev + 4, blk);
     else
-        ctx->heap_free = blk;
+        *head = blk;
 
     /* Coalesce forward */
     if (cur && (blk + blk_size) == cur)
@@ -151,6 +149,131 @@ void M68KEmu_HeapFree(struct M68KEmuContext *ctx, ULONG addr, ULONG size)
             m68k_write32(ctx, prev + 4, m68k_read32(ctx, blk + 4));
         }
     }
+}
+
+/*
+ * With a split heap, MEMF_CHIP allocates only below chip_end, MEMF_FAST
+ * only above it, and anything else prefers Fast and falls back to Chip
+ * like AmigaOS. Without a split, the requirements are ignored.
+ */
+ULONG M68KEmu_HeapAlloc(struct M68KEmuContext *ctx, ULONG size, ULONG requirements)
+{
+    ULONG addr;
+
+    if (!ctx->chip_end)
+        addr = heap_alloc_list(ctx, &ctx->heap_free, size);
+    else if (requirements & MEMF_CHIP)
+        addr = heap_alloc_list(ctx, &ctx->chip_free, size);
+    else
+    {
+        addr = heap_alloc_list(ctx, &ctx->heap_free, size);
+        if (!addr && !(requirements & MEMF_FAST))
+            addr = heap_alloc_list(ctx, &ctx->chip_free, size);
+    }
+
+    if (addr && (requirements & MEMF_CLEAR))
+        memset(ctx->mem + addr, 0, (size + 3) & ~3);
+
+    return addr;
+}
+
+void M68KEmu_HeapFree(struct M68KEmuContext *ctx, ULONG addr, ULONG size)
+{
+    ULONG blk;
+
+    (void)size;
+    if (!addr) return;
+
+    blk = addr - M68KEMU_HEAP_HDR;
+    if (ctx->chip_end && blk < ctx->chip_end)
+        heap_free_list(ctx, &ctx->chip_free, blk);
+    else
+        heap_free_list(ctx, &ctx->heap_free, blk);
+}
+
+/*
+ * Split a fresh heap at chip_end into a Chip and a Fast free list.
+ * Must run before anything is allocated from the heap.
+ */
+BOOL M68KEmu_HeapSplitChip(struct M68KEmuContext *ctx, ULONG chip_end)
+{
+    ULONG heap_size = ctx->heap_end - ctx->heap_start;
+
+    if (ctx->chip_end)
+        return ctx->chip_end == chip_end;
+    if (ctx->heap_free != ctx->heap_start ||
+        m68k_read32(ctx, ctx->heap_start) != heap_size ||
+        m68k_read32(ctx, ctx->heap_start + 4) != 0)
+        return FALSE;
+    if (chip_end & 3 ||
+        chip_end < ctx->heap_start + M68KEMU_HEAP_MIN_SPLIT ||
+        chip_end + M68KEMU_HEAP_MIN_SPLIT > ctx->heap_end)
+        return FALSE;
+
+    ctx->chip_end  = chip_end;
+    ctx->chip_free = ctx->heap_start;
+    m68k_write32(ctx, ctx->heap_start,     chip_end - ctx->heap_start);
+    m68k_write32(ctx, ctx->heap_start + 4, 0);
+
+    ctx->heap_free = chip_end;
+    m68k_write32(ctx, chip_end,     ctx->heap_end - chip_end);
+    m68k_write32(ctx, chip_end + 4, 0);
+    return TRUE;
+}
+
+static ULONG heap_avail_list(struct M68KEmuContext *ctx, ULONG head, BOOL largest)
+{
+    ULONG total = 0, cur;
+
+    for (cur = head; cur; cur = m68k_read32(ctx, cur + 4))
+    {
+        ULONG usable = m68k_read32(ctx, cur);
+        usable = usable > M68KEMU_HEAP_HDR ? usable - M68KEMU_HEAP_HDR : 0;
+        if (largest)
+            total = usable > total ? usable : total;
+        else
+            total += usable;
+    }
+    return total;
+}
+
+/* AvailMem() semantics over the contained heap(s). */
+ULONG M68KEmu_HeapAvail(struct M68KEmuContext *ctx, ULONG requirements)
+{
+    BOOL  largest = (requirements & MEMF_LARGEST) != 0;
+    ULONG chip = 0, fast = 0;
+
+    if (requirements & MEMF_TOTAL)
+    {
+        if (!ctx->chip_end)
+            return ctx->heap_end - ctx->heap_start;
+        chip = ctx->chip_end - ctx->heap_start;
+        fast = ctx->heap_end - ctx->chip_end;
+    }
+    else
+    {
+        fast = heap_avail_list(ctx, ctx->heap_free, largest);
+        if (ctx->chip_end)
+            chip = heap_avail_list(ctx, ctx->chip_free, largest);
+    }
+
+    if (!ctx->chip_end)
+        return fast;
+    if (requirements & MEMF_CHIP)
+        return chip;
+    if (requirements & MEMF_FAST)
+        return fast;
+    if (largest)
+        return chip > fast ? chip : fast;
+    return chip + fast;
+}
+
+/* TypeOfMem() for a contained address. */
+ULONG M68KEmu_HeapTypeOf(struct M68KEmuContext *ctx, ULONG addr)
+{
+    if (!ctx->chip_end)
+        return MEMF_PUBLIC;
+    return MEMF_PUBLIC | (addr < ctx->chip_end ? MEMF_CHIP : MEMF_FAST);
 }
 
 ULONG M68KEmu_LoadHunks(struct M68KEmuContext *ctx, BPTR segList)
@@ -279,6 +402,7 @@ ULONG M68KEmu_LoadHunksFromMemory(struct M68KEmuContext *ctx, UBYTE *data, LONG 
     ULONG magic, num_hunks, first, last;
     ULONG *hunk_sizes = NULL;
     ULONG *hunk_addrs = NULL;
+    ULONG *hunk_reqs  = NULL;
     ULONG i, entry_point = 0;
 
     if (p + 4 > end) return 0;
@@ -304,18 +428,36 @@ ULONG M68KEmu_LoadHunksFromMemory(struct M68KEmuContext *ctx, UBYTE *data, LONG 
     /* Read hunk sizes (in longwords) */
     hunk_sizes = (ULONG *)AllocMem(num_hunks * sizeof(ULONG), MEMF_CLEAR);
     hunk_addrs = (ULONG *)AllocMem(num_hunks * sizeof(ULONG), MEMF_CLEAR);
-    if (!hunk_sizes || !hunk_addrs) goto fail;
+    hunk_reqs  = (ULONG *)AllocMem(num_hunks * sizeof(ULONG), MEMF_CLEAR);
+    if (!hunk_sizes || !hunk_addrs || !hunk_reqs) goto fail;
 
+    /* Hunk sizes in longwords; the top two bits carry memory attributes */
     for (i = 0; i < num_hunks; i++)
     {
+        ULONG raw, memf;
+
         if (p + 4 > end) goto fail;
-        hunk_sizes[i] = (rd32(&p) & HUNK_TYPE_MASK) * 4; /* mask off MEMF flags */
+        raw  = rd32(&p);
+        memf = raw & HUNK_MEMF_MASK;
+        hunk_sizes[i] = (raw & HUNK_TYPE_MASK) * 4;
+
+        if (memf == HUNK_MEMF_MASK)
+        {
+            if (p + 4 > end) goto fail;
+            hunk_reqs[i] = rd32(&p) & (MEMF_CHIP | MEMF_FAST);
+        }
+        else if (memf == HUNK_MEMF_CHIP)
+            hunk_reqs[i] = MEMF_CHIP;
+        else if (memf == HUNK_MEMF_FAST)
+            hunk_reqs[i] = MEMF_FAST;
     }
 
-    /* Allocate space for each hunk in containment memory */
+    /* Allocate space for each hunk in containment memory. Cleared so that
+       BSS and the tail of short CODE/DATA hunks read as zero. */
     for (i = 0; i < num_hunks; i++)
     {
-        ULONG addr = M68KEmu_HeapAlloc(ctx, hunk_sizes[i], 0);
+        ULONG addr = M68KEmu_HeapAlloc(ctx, hunk_sizes[i],
+                                       hunk_reqs[i] | MEMF_CLEAR);
         if (!addr) goto fail;
         hunk_addrs[i] = addr;
         if (i == 0) entry_point = addr;
@@ -384,6 +526,7 @@ ULONG M68KEmu_LoadHunksFromMemory(struct M68KEmuContext *ctx, UBYTE *data, LONG 
 
     FreeMem(hunk_sizes, num_hunks * sizeof(ULONG));
     FreeMem(hunk_addrs, num_hunks * sizeof(ULONG));
+    FreeMem(hunk_reqs,  num_hunks * sizeof(ULONG));
     return entry_point;
 
 fail:
@@ -395,6 +538,7 @@ fail:
         FreeMem(hunk_addrs, num_hunks * sizeof(ULONG));
     }
     if (hunk_sizes) FreeMem(hunk_sizes, num_hunks * sizeof(ULONG));
+    if (hunk_reqs)  FreeMem(hunk_reqs,  num_hunks * sizeof(ULONG));
     return 0;
 }
 
