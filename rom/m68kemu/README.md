@@ -304,9 +304,9 @@ within the emulator.
 
 - The default chipset fallback does not deliver interrupts and returns zero for
   INTREQR/INTENA
-- Rigel builds publish IPL at instruction boundaries and deliver it to
-  contained 68k autovector handlers; native Exec interrupt server bridging is
-  not implemented
+- Rigel builds publish IPL at instruction boundaries and run contained 68k
+  servers and handlers installed with AddIntServer()/SetIntVector(); Cause()
+  and CIA interrupt sources are not bridged
 - Single-threaded: one m68k instruction at a time
 
 ### Memory
@@ -357,6 +357,7 @@ within the emulator.
 | `m68kemu_moira.cpp` | Moira subclass, A-line exception handler, sentinel detection |
 | `m68kemu_run.c` | RunHunk/RunFile entry points, process creation, ExecBase shadow init |
 | `m68kemu_memory.c` | Containment memory allocation, heap allocator, hunk loaders |
+| `m68kemu_interrupts.c` | Contained Exec interrupt API and per-level 68k dispatchers |
 | `m68kemu_rigel.c` | Optional Rigel lifecycle, shared Chip RAM, MMIO, timing, and IPL bridge |
 | `m68kemu_init.c` | Library init/open/close |
 | `m68kemu_stubs.c` | AROS library stubs |
@@ -434,6 +435,7 @@ grep -oP '(OFF|SIZ)\|[^"]*' m68k.s | sed 's/#//g' > m68k_offsets.txt
 | `developer/debug/test/m68kemu_host/test_hello_thunks.cpp` | Host-side end-to-end: A-line trap → thunk dispatch → return |
 | `developer/debug/test/m68kemu_host/test_rigel_integration.cpp` | Moira + native LVO + Rigel MMIO/timing/shared Chip RAM proof |
 | `developer/debug/test/m68kemu_host/test_rigel_chip_irq.cpp` | Rigel milestone 2: Chip/Fast heap, Hunk memory attributes, Blitter interrupt to a 68k autovector handler |
+| `developer/debug/test/m68kemu_host/test_rigel_exec_irq.cpp` | Rigel milestone 3: Exec interrupt servers/handlers, Disable/Enable, Copper frame |
 | `developer/debug/test/m68kemu_host/m68k/rigel_chip_irq.s` | vasm source of that test's Hunk executable (`make fixtures` regenerates the header) |
 | `developer/debug/test/m68kemu/test_m68kemu.c` | AROS-side test: opens m68kemu.library (execution test incomplete) |
 

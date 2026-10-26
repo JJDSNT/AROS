@@ -34,6 +34,7 @@ ULONG M68KEmu_LoadM68KLibrary(struct M68KEmuContext *, const char *) { return 0;
 #include "../../../../rom/m68kemu/Moira/Moira/Moira.cpp"
 #include "../../../../rom/m68kemu/Moira/Moira/MoiraDebugger.cpp"
 #include "../../../../rom/m68kemu/m68kemu_moira.cpp"
+#include "../../../../rom/m68kemu/m68kemu_interrupts.c"
 
 static void emit_word(struct M68KEmuContext *ctx, ULONG &pc, UWORD value)
 {

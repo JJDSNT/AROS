@@ -32,6 +32,7 @@ M68KEMU_FILES := \
     m68kemu_init \
     m68kemu_run \
     m68kemu_memory \
+    m68kemu_interrupts \
     m68kemu_thunks \
     m68kemu_shadow \
     m68kemu_m68klib \

@@ -187,6 +187,42 @@ static IPTR thunk_exec_CopyMem(struct M68KEmuContext *ctx, void *cpu)
 /* -636: CacheClearU() */
 static IPTR thunk_exec_CacheClearU(struct M68KEmuContext *ctx, void *cpu) { return 0; }
 
+/* -120: Disable() — the contained chipset with Rigel, else the host */
+static IPTR thunk_exec_Disable(struct M68KEmuContext *ctx, void *cpu)
+{
+    if (!M68KEmu_Disable(ctx))
+        Disable();
+    return 0;
+}
+
+/* -126: Enable() */
+static IPTR thunk_exec_Enable(struct M68KEmuContext *ctx, void *cpu)
+{
+    if (!M68KEmu_Enable(ctx))
+        Enable();
+    return 0;
+}
+
+/* -162: SetIntVector(D0=intNumber, A1=interrupt) -> D0=old interrupt */
+static IPTR thunk_exec_SetIntVector(struct M68KEmuContext *ctx, void *cpu)
+{
+    return M68KEmu_SetIntVector(ctx, THUNK_D(0), THUNK_A(1));
+}
+
+/* -168: AddIntServer(D0=intNumber, A1=interrupt) */
+static IPTR thunk_exec_AddIntServer(struct M68KEmuContext *ctx, void *cpu)
+{
+    M68KEmu_AddIntServer(ctx, THUNK_D(0), THUNK_A(1));
+    return 0;
+}
+
+/* -174: RemIntServer(D0=intNumber, A1=interrupt) */
+static IPTR thunk_exec_RemIntServer(struct M68KEmuContext *ctx, void *cpu)
+{
+    M68KEmu_RemIntServer(ctx, THUNK_D(0), THUNK_A(1));
+    return 0;
+}
+
 /* -534: TypeOfMem(A1=address) -> D0=attributes */
 static IPTR thunk_exec_TypeOfMem(struct M68KEmuContext *ctx, void *cpu)
 {
@@ -743,9 +779,14 @@ const struct M68KThunkEntry m68kemu_thunks_exec[] = {
     { 570, thunk_exec_ReleaseSemaphore },
     { 354, thunk_exec_AddPort },
     { 360, thunk_exec_RemPort },
+    { 120, thunk_exec_Disable },
+    { 126, thunk_exec_Enable },
+    { 162, thunk_exec_SetIntVector },
+    { 168, thunk_exec_AddIntServer },
+    { 174, thunk_exec_RemIntServer },
     { 0, NULL }
 };
-const ULONG m68kemu_thunks_exec_count = 33;
+const ULONG m68kemu_thunks_exec_count = 38;
 
 /* ── dos.library thunks ──────────────────────────────────────────── */
 

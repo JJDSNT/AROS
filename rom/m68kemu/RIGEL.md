@@ -66,11 +66,18 @@ publish a license before this integration can be distributed.
   hunk. `RunHunkEx()` receives an already loaded segment list whose
   attributes `LoadSeg()` has consumed, so its hunks are placed in Fast.
 - **Interrupts:** in Rigel mode the program starts in supervisor mode with the
-  interrupt mask at 0, like an ordinary Amiga program with interrupts
-  enabled. Unset level 1-6 autovectors point to contained stubs that
-  acknowledge that level's `INTREQ` bits and `RTE`, so an interrupt enabled
-  without a handler is dropped rather than jumping to address 0. Programs
-  install their own handlers by writing the autovector.
+  interrupt mask at 0 and the `INTENA` master bit set, like an ordinary Amiga
+  program. Unset level 1-6 autovectors point to contained 68k dispatchers
+  (`m68kemu_interrupts.c`) that run Exec server chains and `SetIntVector()`
+  handlers with Exec's register conventions, acknowledge chain interrupts,
+  and drop pending bits nobody handles. Programs may still install their own
+  handler by writing the autovector.
+- **Exec interrupt API:** `AddIntServer()` (ordered by `ln_Pri`, enables the
+  `INTENA` bit), `RemIntServer()` (disables it with the last server),
+  `SetIntVector()`, and in Rigel mode `Disable()`/`Enable()` nesting on the
+  contained `INTENA` master bit instead of the host.
+- **Logging:** Rigel's text log goes to the AROS debug log through
+  `config.log_fn`; its structured trace events are discarded.
 - **Compatibility:** without `M68KEMU_RUN_RIGEL` the heap is not split, the
   mask stays at 7, and Hunk loading, containment, fake library bases, and
   native LVO dispatch behave as before.
@@ -90,6 +97,11 @@ make test
 `test_rigel_integration` executes 68k code that calls a native LVO thunk,
 programs Rigel's Blitter through custom MMIO, and copies a word between two
 addresses in shared Chip RAM while chipset time advances from Moira cycles.
+
+`test_rigel_exec_irq` is the milestone 3 acceptance test. It checks server
+ordering and the non-Rigel API directly, runs `m68k/rigel_exec_irq.s`, and
+then inspects Rigel's completed frame: black above the Copper `WAIT` line,
+red from line `$80` down.
 
 `test_rigel_chip_irq` is the milestone 2 acceptance test. It checks the
 Chip/Fast heap, Hunk attribute placement and the short relocation formats
@@ -151,6 +163,10 @@ Completion requires this test to pass with Rigel enabled while all legacy
 non-Rigel host tests continue to pass unchanged.
 
 ## Milestone 3: Exec interrupt API and Copper
+
+Status: implemented; `test_rigel_exec_irq` passes with the milestone 2 and
+legacy host tests, and `kernel-m68kemu-library` builds with and without
+`--enable-m68kemu-rigel`.
 
 Milestone 2 delivers interrupts only to programs that write an autovector
 directly. Ordinary applications use the Exec API instead, and on a hosted
@@ -216,13 +232,12 @@ and without `--enable-m68kemu-rigel`.
   `HUNK_RELOC16`/`HUNK_RELOC8` and overlays still stop loading.
 - **Segment-list attributes:** `RunHunkEx()` cannot recover `HUNKF_CHIP`
   from a segment list; a caller that needs Chip hunks must use `RunFileEx()`.
-- **Copper:** Rigel implements Copper execution and DMA, but the AROS bridge has
-  no focused Copper-list integration test yet.
 - **Blitter and DMA:** CPU bus stalls and `BLTPRI` arbitration are not yet
   applied to Moira, and other DMA engines need bridge-level tests.
-- **Interrupts:** contained 68k autovector handlers work. Native Exec
-  interrupt servers (`AddIntServer()`, `SetIntVector()`) are not bridged to
-  Rigel, and CIA interrupt sources are not forwarded.
+- **Interrupts:** `Cause()` software interrupts, CIA interrupt sources
+  (`PORTS`/`EXTER` from the CIAs) and native (non-68k) interrupt servers are
+  not bridged. Interrupt nodes are tracked by address; a node must not be
+  freed while installed.
 - **Video:** Rigel exposes completed frames and scanlines; no AROS graphics
   presentation backend consumes them yet.
 - **Audio:** Rigel exposes mixed Paula samples; no AHI/native audio backend is
@@ -231,3 +246,6 @@ and without `--enable-m68kemu-rigel`.
   the bridge forwards only custom-register space.
 - **Rigel headers:** the public headers have no `extern "C"` guards, so C++
   callers wrap the include themselves.
+- **Rigel tracing:** the Copper emits a structured `copper_write` trace event
+  for every colour-register write; with stdio logging and no callback it
+  floods stderr.

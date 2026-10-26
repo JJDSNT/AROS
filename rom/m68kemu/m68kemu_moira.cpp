@@ -370,7 +370,8 @@ LONG M68KEmu_Execute(struct M68KEmuContext *ctx)
     m68k_write16(ctx, RTE_ADDR, M68K_OP_RTE);
 
 #ifdef M68KEMU_WITH_RIGEL
-    M68KEmu_RigelInstallVectors(ctx, RTE_ADDR);
+    if (ctx->rigel)
+        M68KEmu_IntInstall(ctx, RTE_ADDR);
 #endif
 
     /* Supervisor trampoline at SV_TRAMP_ADDR:

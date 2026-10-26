@@ -179,6 +179,11 @@ before `lib->gen_thunks[]` (generated).
 | -408 | OldOpenLibrary | Delegates to OpenLibrary |
 | -414 | CloseLibrary | No-op for fake libs |
 | -522 | RawDoFmt | Custom implementation: %s (m68k pointer translation), %d (16-bit), %ld (32-bit) |
+| -120 | Disable | Rigel: nests on contained INTENA master; otherwise native |
+| -126 | Enable | Rigel: nests on contained INTENA master; otherwise native |
+| -162 | SetIntVector | Stores the 68k handler node, returns the previous one |
+| -168 | AddIntServer | Adds a 68k server by ln_Pri, enables its INTENA bit |
+| -174 | RemIntServer | Removes the server, disables the bit with the last one |
 | -534 | TypeOfMem | MEMF_PUBLIC, plus MEMF_CHIP/MEMF_FAST by address with a split heap |
 | -552 | OpenLibrary | Creates fake base + registers thunks; falls back to m68k library loader |
 | -558 | InitSemaphore | No-op |

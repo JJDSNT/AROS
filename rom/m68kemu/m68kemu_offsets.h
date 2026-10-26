@@ -213,6 +213,12 @@
 #define CUSTOM_MASK                 0x00FFF000
 #define POTGOR_DEFAULT              0xFF00
 
+/* ── struct Interrupt (m68k layout) ─────────────────────────────── */
+
+#define M68K_LN_PRI                 9
+#define M68K_IS_DATA                14
+#define M68K_IS_CODE                18
+
 /* ── Heap constants ──────────────────────────────────────────────── */
 
 #define M68KEMU_HEAP_HDR            8   /* heap block header size */

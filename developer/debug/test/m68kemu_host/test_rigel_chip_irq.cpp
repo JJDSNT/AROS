@@ -81,6 +81,7 @@ ULONG M68KEmu_LoadM68KLibrary(struct M68KEmuContext *, const char *) { return 0;
 #include "../../../../rom/m68kemu/Moira/Moira/Moira.cpp"
 #include "../../../../rom/m68kemu/Moira/Moira/MoiraDebugger.cpp"
 #include "../../../../rom/m68kemu/m68kemu_moira.cpp"
+#include "../../../../rom/m68kemu/m68kemu_interrupts.c"
 
 static int failures;
 
@@ -302,8 +303,9 @@ static void test_blit_interrupt(const char *name, const unsigned char *image,
     check(!(rigel_get_intena(rigel) & 0x0040) &&
           !(rigel_get_intreq(rigel) & 0x0040) && rigel_get_ipl(rigel) == 0,
           "Rigel left with BLIT disabled and acknowledged");
-    check(m68k_read32(ctx, 0x6c) == 0x110 + 2 * 10,
-          "default level 3 autovector restored");
+    check(m68k_read32(ctx, 0x6c) ==
+              M68KEMU_INT_STUBS + 2 * M68KEMU_INT_STUB_SIZE,
+          "level 3 Exec dispatcher restored");
     M68KEmu_DestroyContext(ctx);
 }
 

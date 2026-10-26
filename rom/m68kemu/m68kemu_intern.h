@@ -66,6 +66,27 @@ struct M68KLibMapEntry
     ULONG   m68k_base;          /* fake base in containment space */
 };
 
+/* Contained Exec interrupt state (AddIntServer/SetIntVector) */
+#define M68KEMU_INT_COUNT       16
+#define M68KEMU_INT_MAX_SERVERS 16
+
+/* All-zero is the initial state: idle levels, interrupts enabled */
+struct M68KIntLevelState
+{
+    UBYTE   active;         /* interrupt bit + 1 in progress, 0 = idle */
+    UBYTE   next_server;    /* next server of a chain to call */
+};
+
+struct M68KIntState
+{
+    ULONG   vectors[M68KEMU_INT_COUNT];     /* SetIntVector nodes */
+    ULONG   servers[M68KEMU_INT_COUNT][M68KEMU_INT_MAX_SERVERS];
+    UBYTE   num_servers[M68KEMU_INT_COUNT];
+    struct M68KIntLevelState level[8];
+    ULONG   dispatch_base;  /* private fake library for the dispatchers */
+    ULONG   disable_depth;  /* nested Disable() calls, 0 = enabled */
+};
+
 struct M68KEmuContext
 {
     UBYTE  *mem;
@@ -116,6 +137,8 @@ struct M68KEmuContext
     UWORD   beam_v;     /* vertical position 0-312 */
     UBYTE   beam_h;     /* horizontal position 0-226 */
     UBYTE   beam_lof;   /* long frame flag (toggled each frame) */
+
+    struct M68KIntState ints;
 
 #ifdef M68KEMU_WITH_RIGEL
     APTR    rigel;
@@ -201,6 +224,19 @@ ULONG  M68KEmu_SetupLibBase(struct M68KEmuContext *ctx, UWORD lib_id,
                              const struct M68KThunkEntry *thunks, ULONG num_thunks,
                              const struct M68KThunkEntry *gen_thunks, ULONG num_gen_thunks);
 
+/* Contained Exec interrupt API (m68kemu_interrupts.c) */
+BOOL   M68KEmu_IntInstall(struct M68KEmuContext *ctx, ULONG rte_addr);
+void   M68KEmu_AddIntServer(struct M68KEmuContext *ctx, ULONG intNum, ULONG irq);
+void   M68KEmu_RemIntServer(struct M68KEmuContext *ctx, ULONG intNum, ULONG irq);
+ULONG  M68KEmu_SetIntVector(struct M68KEmuContext *ctx, ULONG intNum, ULONG irq);
+BOOL   M68KEmu_Disable(struct M68KEmuContext *ctx);
+BOOL   M68KEmu_Enable(struct M68KEmuContext *ctx);
+
+/* Dispatcher stubs live in the user-vector area after the LINEA RTE and
+   the Supervisor() trampoline (0x100-0x10B); one per level 1-6. */
+#define M68KEMU_INT_STUBS       0x000110UL
+#define M68KEMU_INT_STUB_SIZE   44UL
+
 /* Lookup fake base by library name (used by OpenLibrary thunk) */
 ULONG  M68KEmu_FindLibBase(struct M68KEmuContext *ctx, const char *name);
 
@@ -213,7 +249,7 @@ void   M68KEmu_AutoOpenLibs(struct M68KEmuContext *ctx);
 #ifdef M68KEMU_WITH_RIGEL
 BOOL   M68KEmu_RigelInit(struct M68KEmuContext *ctx);
 void   M68KEmu_RigelDestroy(struct M68KEmuContext *ctx);
-void   M68KEmu_RigelInstallVectors(struct M68KEmuContext *ctx, ULONG rte_addr);
+void   M68KEmu_RigelIntState(struct M68KEmuContext *ctx, UWORD *intena, UWORD *intreq);
 BOOL   M68KEmu_RigelRead(struct M68KEmuContext *ctx, ULONG addr,
                          UBYTE size, ULONG *value);
 BOOL   M68KEmu_RigelWrite(struct M68KEmuContext *ctx, ULONG addr,
