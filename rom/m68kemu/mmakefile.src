@@ -16,6 +16,12 @@ include $(SRCDIR)/config/aros.cfg
 #MM- kernel-m68kemu-aarch64 : kernel-m68kemu-library
 #MM- kernel-m68kemu-riscv64 : kernel-m68kemu-library
 
+# Link against the Rigel static library only when configured with
+# --enable-m68kemu-rigel (M68KEMU_RIGEL comes from target.cfg).
+#MM kernel-m68kemu-library : kernel-m68kemu-rigel-$(M68KEMU_RIGEL)
+#MM- kernel-m68kemu-rigel-yes : linklibs-rigel
+#MM- kernel-m68kemu-rigel-no :
+
 USER_CPPFLAGS := -DNO_INLINE_STDARG -I$(SRCDIR)/$(CURDIR)/Moira
 # Moira uses if constexpr (<integer>) - narrowing the condition to bool is only
 # well formed since P1401R5, which clang implements from 12 on (clang 11 errors).
