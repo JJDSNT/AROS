@@ -69,6 +69,44 @@ make test
 programs Rigel's Blitter through custom MMIO, and copies a word between two
 addresses in shared Chip RAM while chipset time advances from Moira cycles.
 
+## Milestone 2: Chip RAM allocation and interrupts
+
+The next milestone makes DMA and chipset interrupts usable by ordinary
+contained 68k applications. It remains below the level of a complete Amiga
+machine or native presentation backend.
+
+### Scope
+
+- Split the contained address space into explicit Chip and Fast memory
+  allocation regions.
+- Make emulated `AllocMem()` and `AllocVec()` honor `MEMF_CHIP` and prevent DMA
+  clients from receiving addresses outside Rigel's Chip RAM window.
+- Preserve and apply relevant Hunk memory attributes when loading segments.
+- Validate interrupt requests from Rigel through `Moira::setIPL()`, 68k
+  autovector entry, handler execution, `INTREQ` acknowledgement, and `RTE`.
+- Keep Hunk execution, containment, and native AROS LVO calls working before
+  and after interrupt delivery.
+
+CPU bus stalls, `BLTPRI` arbitration, native Exec interrupt servers, graphics
+presentation, and audio output remain outside this milestone.
+
+### Acceptance test
+
+A focused 68k test program must:
+
+1. Allocate source and destination buffers with `MEMF_CHIP`.
+2. Verify that both buffers are inside Rigel's Chip RAM window.
+3. Install a contained 68k autovector handler.
+4. Enable the relevant `INTENA` bit and start a Blitter copy.
+5. Observe the `BLIT` interrupt, acknowledge it through `INTREQ`, update a
+   counter, and return with `RTE`.
+6. Verify the DMA result and exactly one expected interrupt.
+7. Call a native AROS service through an LVO after the interrupt.
+8. Exit with a deterministic result suitable for the host test suite.
+
+Completion requires this test to pass with Rigel enabled while all legacy
+non-Rigel host tests continue to pass unchanged.
+
 ## Remaining work
 
 - **Chip RAM allocation:** `AllocMem()` and Hunk memory attributes still ignore
