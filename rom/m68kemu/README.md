@@ -217,7 +217,8 @@ Assign LIBS68K: SYS:Libs/m68k
 
 The loader:
 
-1. Parses the hunk file (CODE/DATA/BSS/RELOC32)
+1. Parses the hunk file (CODE/DATA/BSS, RELOC32, RELOC32SHORT/DREL32,
+   RELRELOC32; SYMBOL/DEBUG/NAME are skipped)
 2. Scans for `RTC_MATCHWORD` (`0x4AFC`) and reads the `RTF_AUTOINIT` function table
 3. Builds a JMP absolute long jump table — m68k-to-m68k calls work with no traps
 4. Handles both absolute and relative function pointers in the init table
@@ -341,7 +342,8 @@ within the emulator.
 
 - Max 100 hunks per binary
 - No overlay hunks (HUNK_OVERLAY, HUNK_BREAK)
-- No HUNK_DEBUG or HUNK_SYMBOL support
+- HUNK_DEBUG, HUNK_SYMBOL and HUNK_NAME are skipped, not used
+- No HUNK_ABSRELOC16, HUNK_RELOC16 or HUNK_RELOC8
 - Non-AUTOINIT m68k libraries not supported
 
 ## File Structure

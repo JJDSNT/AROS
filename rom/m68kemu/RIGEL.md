@@ -26,6 +26,12 @@ Configure a fresh AROS build tree with the optional integration enabled:
 make kernel-m68kemu-library
 ```
 
+`kernel-m68kemu-library` depends on `linklibs-rigel` only when configured
+with the option. A GNU toolchain built without GCC's `libatomic` fails to
+link the C++ runtime with `cannot find -latomic`; a full build provides it,
+and for a single-target build `make linklibs-atomic-helpers` supplies AROS's
+minimal replacement.
+
 The AROS build invokes Rigel's CMake build as a static library with its tests,
 harness, hosted environment hooks, hosted allocation, hosted RTC, and SIMD
 disabled. `m68kemu_rigel.c` supplies AROS allocation callbacks.
@@ -86,12 +92,15 @@ programs Rigel's Blitter through custom MMIO, and copies a word between two
 addresses in shared Chip RAM while chipset time advances from Moira cycles.
 
 `test_rigel_chip_irq` is the milestone 2 acceptance test. It checks the
-Chip/Fast heap and Hunk attribute placement directly, then runs
-`m68k/rigel_chip_irq.s`, a real Hunk executable with `bss_c` and `data_f`
-sections, which follows the acceptance steps below and returns the failing
-step number in `D0`. Rigel state is inspected only through its public API.
+Chip/Fast heap, Hunk attribute placement and the short relocation formats
+directly, then runs `m68k/rigel_chip_irq.s`, a real Hunk executable with
+`bss_c` and `data_f` sections, which follows the acceptance steps below and
+returns the failing step number in `D0`. The program runs twice: assembled
+with `-kick1hunks` (`HUNK_RELOC32` only) and with vasm's defaults
+(`HUNK_DREL32` and a symbol table). Rigel state is inspected only through
+its public API.
 
-The assembled program is committed as `m68k/rigel_chip_irq_hunk.h`, so the
+The assembled programs are committed as `m68k/rigel_chip_irq*_hunk.h`, so the
 suite needs no m68k toolchain. After editing the source, regenerate it with
 vasm from the `amigadev/crosstools:m68k-amigaos` Docker image through
 Rigel's `scripts/m68k` wrapper:
@@ -143,12 +152,10 @@ non-Rigel host tests continue to pass unchanged.
 
 ## Remaining work
 
-- **Short Hunk relocations:** the m68kemu Hunk loader handles only
-  `HUNK_RELOC32` and stops at any other block. vasm, vlink and current
-  compilers emit `HUNK_RELOC32SHORT` / `HUNK_DREL32` by default (the test
-  fixture uses `-kick1hunks` to avoid them), and AROS `LoadSeg()` accepts
-  both. Supporting them, plus `HUNK_RELRELOC32`, is needed for general
-  third-party executables.
+- **Remaining Hunk blocks:** the loader handles `HUNK_RELOC32`,
+  `HUNK_RELOC32SHORT`, `HUNK_DREL32` (V37 short form), `HUNK_RELRELOC32`, and
+  skips `HUNK_SYMBOL`, `HUNK_DEBUG` and `HUNK_NAME`. `HUNK_ABSRELOC16`,
+  `HUNK_RELOC16`/`HUNK_RELOC8` and overlays still stop loading.
 - **Segment-list attributes:** `RunHunkEx()` cannot recover `HUNKF_CHIP`
   from a segment list; a caller that needs Chip hunks must use `RunFileEx()`.
 - **Copper:** Rigel implements Copper execution and DMA, but the AROS bridge has

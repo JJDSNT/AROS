@@ -395,6 +395,24 @@ static ULONG rd32(UBYTE **p)
     return v;
 }
 
+static UWORD rd16(UBYTE **p)
+{
+    UWORD v = (UWORD)(((*p)[0] << 8) | (*p)[1]);
+    *p += 2;
+    return v;
+}
+
+/* Add delta to the longword at offset in a loaded hunk, if it fits. */
+static void reloc_hunk_long(struct M68KEmuContext *ctx, ULONG hunk_addr,
+                            ULONG hunk_size, ULONG offset, ULONG delta)
+{
+    if (offset + 3 < hunk_size)
+    {
+        ULONG addr = hunk_addr + offset;
+        m68k_write32(ctx, addr, m68k_read32(ctx, addr) + delta);
+    }
+}
+
 ULONG M68KEmu_LoadHunksFromMemory(struct M68KEmuContext *ctx, UBYTE *data, LONG size)
 {
     UBYTE *p = data;
@@ -474,7 +492,8 @@ ULONG M68KEmu_LoadHunksFromMemory(struct M68KEmuContext *ctx, UBYTE *data, LONG 
             if (p + 4 > end) goto fail;
             ULONG longs = rd32(&p);
             ULONG bytes = longs * 4;
-            if (p + bytes > end || i >= num_hunks) goto fail;
+            if (p + bytes > end || i >= num_hunks ||
+                bytes > hunk_sizes[i]) goto fail;
 
             /* Copy data into containment space */
             memcpy(m68k_to_host(ctx, hunk_addrs[i]), p, bytes);
@@ -501,13 +520,66 @@ ULONG M68KEmu_LoadHunksFromMemory(struct M68KEmuContext *ctx, UBYTE *data, LONG 
                 {
                     if (p + 4 > end) goto fail;
                     ULONG offset = rd32(&p);
-                    if (i < num_hunks && offset + 3 < hunk_sizes[i])
-                    {
-                        ULONG addr = hunk_addrs[i] + offset;
-                        ULONG val = m68k_read32(ctx, addr);
-                        m68k_write32(ctx, addr, val + ref_base);
-                    }
+                    if (i < num_hunks)
+                        reloc_hunk_long(ctx, hunk_addrs[i], hunk_sizes[i],
+                                        offset, ref_base);
                 }
+            }
+        }
+        else if (type == HUNK_RELOC32SHORT || type == HUNK_DREL32 ||
+                 type == HUNK_RELRELOC32)
+        {
+            /* Word-sized count, hunk and offsets; padded to a longword.
+               RELRELOC32 fields are PC-relative, so they move by the
+               distance between the target hunk and this one. */
+            UBYTE *start = p;
+
+            if (i >= num_hunks) goto fail;
+            for (;;)
+            {
+                UWORD count, ref_hunk, j;
+                ULONG delta;
+
+                if (p + 2 > end) goto fail;
+                count = rd16(&p);
+                if (count == 0) break;
+                if (p + 2 > end) goto fail;
+                ref_hunk = rd16(&p);
+                if (ref_hunk >= num_hunks) goto fail;
+
+                delta = hunk_addrs[ref_hunk];
+                if (type == HUNK_RELRELOC32)
+                    delta -= hunk_addrs[i];
+
+                if (p + 2UL * count > end) goto fail;
+                for (j = 0; j < count; j++)
+                    reloc_hunk_long(ctx, hunk_addrs[i], hunk_sizes[i],
+                                    rd16(&p), delta);
+            }
+            if ((p - start) & 2)
+                p += 2;
+        }
+        else if (type == HUNK_NAME || type == HUNK_DEBUG)
+        {
+            ULONG longs;
+
+            if (p + 4 > end) goto fail;
+            longs = rd32(&p);
+            if (longs > (ULONG)(end - p) / 4) goto fail;
+            p += longs * 4;
+        }
+        else if (type == HUNK_SYMBOL)
+        {
+            /* (name length in longs, name, value) until a zero length */
+            for (;;)
+            {
+                ULONG longs;
+
+                if (p + 4 > end) goto fail;
+                longs = rd32(&p) & 0x00FFFFFF;
+                if (longs == 0) break;
+                if (longs + 1 > (ULONG)(end - p) / 4) goto fail;
+                p += (longs + 1) * 4;
             }
         }
         else if (type == HUNK_END)

@@ -5,15 +5,17 @@
  * attributes, and a Blitter interrupt delivered to a contained 68k
  * autovector handler, with native LVO calls before and after it.
  *
- * The 68k program is m68k/rigel_chip_irq.s, assembled into a real Hunk
- * executable (see "make fixtures"). Rigel state is only observed through
- * its public API.
+ * The 68k program is m68k/rigel_chip_irq.s, assembled by vasm into real
+ * Hunk executables (see "make fixtures"): once with Kickstart 1.x
+ * HUNK_RELOC32 only, once with vasm's defaults (short relocations and a
+ * symbol table). Rigel state is only observed through its public API.
  */
 #include <exec/memory.h>
 #include "m68kemu_intern.h"
 #include "m68kemu_offsets.h"
 #include "m68kemu_thunks.h"
 #include "m68k/rigel_chip_irq_hunk.h"
+#include "m68k/rigel_chip_irq_short_hunk.h"
 
 /* Rigel headers carry no C++ linkage guards */
 extern "C" {
@@ -26,7 +28,6 @@ extern "C" {
 #include <vector>
 
 /* Native exec services, bound to the same heap API as m68kemu_thunks.c */
-static struct M68KEmuContext *g_ctx;
 static int g_chip_allocs, g_frees_after_irq, g_frees, g_availmem_calls;
 
 static IPTR thunk_AllocMem(struct M68KEmuContext *ctx, void *cpu)
@@ -184,22 +185,100 @@ static void test_heap_split()
     M68KEmu_DestroyContext(ctx);
 }
 
-static void test_blit_interrupt()
+static void put16(std::vector<UBYTE> &v, UWORD x)
 {
-    std::printf("Blitter interrupt program\n");
+    v.push_back((UBYTE)(x >> 8));
+    v.push_back((UBYTE)x);
+}
+
+/*
+ * Hunk 0 (code, 4 longs):
+ *   longs 0 = 0x10 and 3 = 0x30: relocated to hunk 1 by a short block with
+ *     an odd word count, so it is padded to a longword
+ *   long 1 = 0x20: relocated PC-relative to hunk 1 by HUNK_RELRELOC32
+ *   long 2 = 0: relocated to hunk 1 by HUNK_RELOC32, giving hunk 1's address
+ * HUNK_SYMBOL and HUNK_DEBUG must be skipped and the BSS hunk after them
+ * still loaded.
+ */
+static bool load_short_reloc_probe(ULONG reloc_type, ULONG *entry_out,
+                                   ULONG *hunk1_out, ULONG *rel_out,
+                                   ULONG *abs_out, ULONG *abs2_out)
+{
+    std::vector<UBYTE> h;
+    struct M68KEmuContext *ctx = new_context(false);
+
+    put32(h, HUNK_HEADER);
+    put32(h, 0);
+    put32(h, 2); put32(h, 0); put32(h, 1);
+    put32(h, 4);
+    put32(h, 4);
+    put32(h, HUNK_CODE); put32(h, 4);
+    put32(h, 0x10); put32(h, 0x20); put32(h, 0); put32(h, 0x30);
+    put32(h, HUNK_RELOC32);
+    put32(h, 1); put32(h, 1); put32(h, 8); put32(h, 0);
+    put32(h, reloc_type);
+    put16(h, 2); put16(h, 1); put16(h, 0); put16(h, 12);  /* longs 0, 3 */
+    put16(h, 0);                                          /* 5 words */
+    put16(h, 0);                                          /* padding */
+    put32(h, HUNK_RELRELOC32);
+    put16(h, 1); put16(h, 1); put16(h, 4); put16(h, 0);  /* 4: no pad */
+    put32(h, HUNK_SYMBOL);
+    put32(h, 1); put32(h, 0x73796d00); put32(h, 0);       /* "sym" = 0 */
+    put32(h, 0);
+    put32(h, HUNK_DEBUG); put32(h, 2); put32(h, 0); put32(h, 0);
+    put32(h, HUNK_END);
+    put32(h, HUNK_BSS); put32(h, 4);
+    put32(h, HUNK_END);
+
+    ULONG entry = M68KEmu_LoadHunksFromMemory(ctx, h.data(), (LONG)h.size());
+    *entry_out = entry;
+    *abs_out = entry ? m68k_read32(ctx, entry) : 0;
+    *rel_out = entry ? m68k_read32(ctx, entry + 4) : 0;
+    *hunk1_out = entry ? m68k_read32(ctx, entry + 8) : 0;
+    *abs2_out = entry ? m68k_read32(ctx, entry + 12) : 0;
+    M68KEmu_DestroyContext(ctx);
+    return entry != 0;
+}
+
+static void test_short_relocs()
+{
+    static const struct { ULONG type; const char *name; } kinds[] = {
+        { HUNK_RELOC32SHORT, "HUNK_RELOC32SHORT" },
+        { HUNK_DREL32,       "HUNK_DREL32" },
+    };
+
+    std::printf("Short Hunk relocations\n");
+    for (const auto &k : kinds)
+    {
+        ULONG entry, hunk1, rel, abs, abs2;
+        char what[80];
+        bool loaded = load_short_reloc_probe(k.type, &entry, &hunk1, &rel, &abs,
+                                             &abs2);
+
+        std::snprintf(what, sizeof(what), "%s + RELRELOC32 + SYMBOL/DEBUG", k.name);
+        check(loaded && hunk1 != entry && hunk1 + 0x10 == abs &&
+              hunk1 + 0x30 == abs2 &&
+              rel == 0x20 + (hunk1 - entry), what);
+    }
+}
+
+static void test_blit_interrupt(const char *name, const unsigned char *image,
+                                size_t size)
+{
+    std::printf("Blitter interrupt program (%s)\n", name);
+    g_chip_allocs = g_frees_after_irq = g_frees = g_availmem_calls = 0;
 
     struct M68KEmuContext *ctx = new_context(true);
     check(ctx != nullptr, "Rigel context");
     if (!ctx)
         return;
-    g_ctx = ctx;
 
     ULONG sysbase = M68KEmu_SetupLibBase(ctx, 0, "exec.library", 128,
                                          m68kemu_thunks_exec,
                                          m68kemu_thunks_exec_count,
                                          nullptr, 0);
     ULONG entry = M68KEmu_LoadHunksFromMemory(
-        ctx, (UBYTE *)rigel_chip_irq_hunk, (LONG)sizeof(rigel_chip_irq_hunk));
+        ctx, (UBYTE *)image, (LONG)size);
     check(sysbase && entry, "load Hunk executable");
     if (!sysbase || !entry)
     {
@@ -239,7 +318,11 @@ int main()
     alarm(20);
 
     test_heap_split();
-    test_blit_interrupt();
+    test_short_relocs();
+    test_blit_interrupt("HUNK_RELOC32", rigel_chip_irq_hunk,
+                        sizeof(rigel_chip_irq_hunk));
+    test_blit_interrupt("HUNK_DREL32 + HUNK_SYMBOL", rigel_chip_irq_short_hunk,
+                        sizeof(rigel_chip_irq_short_hunk));
 
     std::printf("%s: Rigel milestone 2 (Chip RAM + interrupts)\n",
                 failures ? "FAIL" : "PASS");

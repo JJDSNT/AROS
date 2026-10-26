@@ -40,7 +40,7 @@ m68kemu_rigel_host.o: $(ROOT)/rom/m68kemu/m68kemu_rigel.c $(RIGEL_LIB)
 test_rigel_integration: test_rigel_integration.cpp m68kemu_rigel_host.o $(RIGEL_LIB)
 	$(CXX) $(CXXFLAGS) $(RIGEL_CPPFLAGS) -o $@ $< m68kemu_rigel_host.o $(RIGEL_LIB)
 
-test_rigel_chip_irq: test_rigel_chip_irq.cpp m68k/rigel_chip_irq_hunk.h m68kemu_rigel_host.o $(RIGEL_LIB)
+test_rigel_chip_irq: test_rigel_chip_irq.cpp m68k/rigel_chip_irq_hunk.h m68k/rigel_chip_irq_short_hunk.h m68kemu_rigel_host.o $(RIGEL_LIB)
 	$(CXX) $(CXXFLAGS) $(RIGEL_CPPFLAGS) -o $@ $< m68kemu_rigel_host.o $(RIGEL_LIB)
 
 # The 68k fixtures are committed so "make test" needs no m68k toolchain.
@@ -48,7 +48,9 @@ test_rigel_chip_irq: test_rigel_chip_irq.cpp m68k/rigel_chip_irq_hunk.h m68kemu_
 fixtures:
 	$(M68K) vasmm68k_mot -Fhunkexe -kick1hunks -nosym -quiet -o m68k/rigel_chip_irq.hunk m68k/rigel_chip_irq.s
 	python3 m68k/bin_to_header.py m68k/rigel_chip_irq.hunk m68k/rigel_chip_irq_hunk.h rigel_chip_irq_hunk
-	rm -f m68k/rigel_chip_irq.hunk
+	$(M68K) vasmm68k_mot -Fhunkexe -quiet -o m68k/rigel_chip_irq_short.hunk m68k/rigel_chip_irq.s
+	python3 m68k/bin_to_header.py m68k/rigel_chip_irq_short.hunk m68k/rigel_chip_irq_short_hunk.h rigel_chip_irq_short_hunk
+	rm -f m68k/rigel_chip_irq.hunk m68k/rigel_chip_irq_short.hunk
 
 test: all
 	./test_m68kemu

@@ -229,7 +229,13 @@
 #define HUNK_DATA                   0x3EA
 #define HUNK_BSS                    0x3EB
 #define HUNK_RELOC32                0x3EC
+#define HUNK_NAME                   0x3E8
 #define HUNK_END                    0x3F2
+#define HUNK_SYMBOL                 0x3F0
+#define HUNK_DEBUG                  0x3F1
+#define HUNK_DREL32                 0x3F7  /* RELOC32SHORT in V37 executables */
+#define HUNK_RELOC32SHORT           0x3FC
+#define HUNK_RELRELOC32             0x3FD
 #define HUNK_TYPE_MASK              0x3FFFFFFF
 #define HUNK_MEMF_CHIP              0x40000000UL  /* HUNKF_CHIP in a size word */
 #define HUNK_MEMF_FAST              0x80000000UL  /* HUNKF_FAST in a size word */
