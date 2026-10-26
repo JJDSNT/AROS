@@ -49,7 +49,7 @@ M68KEMU_USELIBS := stdc++ posixc stdcio stdc
 ifeq ($(M68KEMU_RIGEL),yes)
 USER_CPPFLAGS += -DM68KEMU_WITH_RIGEL=1 \
     -I$(SRCDIR)/$(CURDIR)/Rigel/include
-M68KEMU_FILES += m68kemu_rigel
+M68KEMU_FILES += m68kemu_rigel m68kemu_display
 M68KEMU_USELIBS += rigel
 
 %build_with_cmake mmake=linklibs-rigel package=rigel \

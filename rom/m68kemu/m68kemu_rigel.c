@@ -31,6 +31,7 @@ static void rigel_free(void *ptr, void *opaque)
 /* Rigel's text log goes to the AROS debug log, never to host stdio */
 static void rigel_log(const char *message, void *opaque)
 {
+    (void)message;
     (void)opaque;
     bug("[m68kemu/rigel] %s\n", message);
 }
@@ -128,12 +129,45 @@ BOOL M68KEmu_RigelWrite(struct M68KEmuContext *ctx, ULONG addr,
     return status != RIGEL_MMIO_UNMAPPED;
 }
 
+/* Hand a completed frame to the presenter; stop the program if it asks */
+static void present_frame(struct M68KEmuContext *ctx)
+{
+    RigelContext *rigel = (RigelContext *)ctx->rigel;
+    rigel_frame_t frame;
+    struct M68KEmuFrame out;
+
+    if (!rigel_get_frame(rigel, &frame) || !frame.pixels ||
+        frame.format != RIGEL_PIXEL_RGBA8888)
+        return;
+
+    out.pixels   = (const ULONG *)frame.pixels;
+    out.width    = frame.width;
+    out.height   = frame.height;
+    out.pitch    = frame.pitch;
+    out.number   = (ULONG)frame.frame_count;
+    /* Cycle counts are colour clocks; rigel_get_clock_hz() is the CPU
+       rate, twice that (Rigel docs/timing_model.md, ISSUE-0014) */
+    out.frame_us = (ULONG)rigel_cycles_to_us(rigel_get_frame_cycles(rigel),
+                                             rigel_get_clock_hz(rigel) / 2u);
+
+    if (!ctx->presenter.present(ctx, &out))
+    {
+        ctx->stopped = TRUE;
+        ctx->running = FALSE;
+    }
+}
+
 void M68KEmu_RigelStepCPU(struct M68KEmuContext *ctx,
                           unsigned long long cycles)
 {
-    if (ctx && ctx->rigel)
-        (void)rigel_step_cpu_cycles((RigelContext *)ctx->rigel,
-                                    (rigel_u64)cycles);
+    rigel_step_result_t result;
+
+    if (!ctx || !ctx->rigel)
+        return;
+    result = rigel_step_cpu_cycles((RigelContext *)ctx->rigel,
+                                   (rigel_u64)cycles);
+    if ((result.events & RIGEL_EVENT_FRAME_READY) && ctx->presenter.present)
+        present_frame(ctx);
 }
 
 void M68KEmu_RigelIntState(struct M68KEmuContext *ctx, UWORD *intena,

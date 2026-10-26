@@ -2,6 +2,8 @@
 # Author: Fabian Schmieder (@metaneutrons)
 include $(SRCDIR)/config/aros.cfg
 
+#MM test-m68kemu-runm68k : kernel-m68kemu-library-includes
+
 %build_prog mmake=test-m68kemu \
     progname=test_m68kemu targetdir=$(AROS_TESTS)/m68kemu \
     files=test_m68kemu

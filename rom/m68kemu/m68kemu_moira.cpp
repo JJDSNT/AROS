@@ -262,8 +262,10 @@ public:
                         u32 ret_addr = m68k_read32(ctx, sp);
                         setA(7, sp + 4);
 
-                        /* Run the thunk */
-                        bug("[m68kemu] CALL %s LVO -%lu\n", lib->name, lvo_offset);
+                        /* Run the thunk; the unnamed internal interrupt
+                           dispatcher runs every frame, so stays quiet */
+                        if (lib->name[0])
+                            bug("[m68kemu] CALL %s LVO -%lu\n", lib->name, lvo_offset);
                         IPTR ret = lib->thunks[j].thunk(ctx, static_cast<void *>(this));
 
                         if (ctx->sv_redirect)
@@ -395,6 +397,7 @@ LONG M68KEmu_Execute(struct M68KEmuContext *ctx)
     cpu.setA(6, ctx->m68k_sysbase);
 
     ctx->running = TRUE;
+    ctx->stopped = FALSE;
     ctx->exit_code = 0;
 
     while (ctx->running)
@@ -414,7 +417,13 @@ LONG M68KEmu_Execute(struct M68KEmuContext *ctx)
 #endif
     }
 
-    ctx->exit_code = (LONG)cpu.getD(0);
+    ctx->exit_code = ctx->stopped ? M68KEMU_EXIT_STOPPED : (LONG)cpu.getD(0);
+
+#ifdef M68KEMU_WITH_RIGEL
+    /* The presenter's window and timer belong to this task */
+    if (ctx->presenter.destroy)
+        ctx->presenter.destroy(ctx);
+#endif
     return ctx->exit_code;
 }
 

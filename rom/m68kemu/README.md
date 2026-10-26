@@ -357,6 +357,7 @@ within the emulator.
 | `m68kemu_moira.cpp` | Moira subclass, A-line exception handler, sentinel detection |
 | `m68kemu_run.c` | RunHunk/RunFile entry points, process creation, ExecBase shadow init |
 | `m68kemu_memory.c` | Containment memory allocation, heap allocator, hunk loaders |
+| `m68kemu_display.c` | Optional Rigel frame presenter: native window, pacing, stop on close/Esc/Ctrl-C |
 | `m68kemu_interrupts.c` | Contained Exec interrupt API and per-level 68k dispatchers |
 | `m68kemu_rigel.c` | Optional Rigel lifecycle, shared Chip RAM, MMIO, timing, and IPL bridge |
 | `m68kemu_init.c` | Library init/open/close |
@@ -435,6 +436,7 @@ grep -oP '(OFF|SIZ)\|[^"]*' m68k.s | sed 's/#//g' > m68k_offsets.txt
 | `developer/debug/test/m68kemu_host/test_hello_thunks.cpp` | Host-side end-to-end: A-line trap → thunk dispatch → return |
 | `developer/debug/test/m68kemu_host/test_rigel_integration.cpp` | Moira + native LVO + Rigel MMIO/timing/shared Chip RAM proof |
 | `developer/debug/test/m68kemu_host/test_rigel_chip_irq.cpp` | Rigel milestone 2: Chip/Fast heap, Hunk memory attributes, Blitter interrupt to a 68k autovector handler |
+| `developer/debug/test/m68kemu_host/test_rigel_display.cpp` | Rigel milestone 4: frame pump to a recording presenter, checkerboard display, early stop |
 | `developer/debug/test/m68kemu_host/test_rigel_exec_irq.cpp` | Rigel milestone 3: Exec interrupt servers/handlers, Disable/Enable, Copper frame |
 | `developer/debug/test/m68kemu_host/m68k/rigel_chip_irq.s` | vasm source of that test's Hunk executable (`make fixtures` regenerates the header) |
 | `developer/debug/test/m68kemu/test_m68kemu.c` | AROS-side test: opens m68kemu.library (execution test incomplete) |
@@ -459,7 +461,9 @@ make kernel-m68kemu
 To build the optional Rigel path, configure a fresh build tree with
 `--enable-m68kemu-rigel`, initialize both submodules, and build the same target.
 Existing callers still use the fallback; opt in at execution time with
-`RunHunkEx(..., M68KEMU_RUN_RIGEL)` or `RunFileEx(..., M68KEMU_RUN_RIGEL)`.
+`RunHunkEx(..., M68KEMU_RUN_RIGEL)` or `RunFileEx(..., M68KEMU_RUN_RIGEL)`;
+`M68KEMU_RUN_DISPLAY` also shows the chipset's frames in a window. From the
+shell: `RunM68K [RIGEL] [DISPLAY] <file> [args]`.
 
 The built library appears at `bin/linux-x86_64/AROS/Libs/m68kemu.library`.
 

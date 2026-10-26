@@ -56,6 +56,8 @@ void M68KEmu_DestroyContext(struct M68KEmuContext *ctx)
 {
     if (!ctx) return;
 #ifdef M68KEMU_WITH_RIGEL
+    if (ctx->presenter.destroy)
+        ctx->presenter.destroy(ctx);
     M68KEmu_RigelDestroy(ctx);
 #endif
     if (ctx->mem) FreeMem(ctx->mem, ctx->mem_size);

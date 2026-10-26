@@ -135,8 +135,10 @@ static struct M68KEmuContext *create_context_for_flags(
 {
     struct M68KEmuContext *ctx;
 
-    if (flags & ~M68KEMU_RUN_RIGEL)
+    if (flags & ~(M68KEMU_RUN_RIGEL | M68KEMU_RUN_DISPLAY))
         return NULL;
+    if (flags & M68KEMU_RUN_DISPLAY)
+        flags |= M68KEMU_RUN_RIGEL;
 
     ctx = M68KEmu_CreateContext(base);
     if (!ctx)
@@ -145,7 +147,8 @@ static struct M68KEmuContext *create_context_for_flags(
     if (flags & M68KEMU_RUN_RIGEL)
     {
 #ifdef M68KEMU_WITH_RIGEL
-        if (!M68KEmu_RigelInit(ctx))
+        if (!M68KEmu_RigelInit(ctx) ||
+            ((flags & M68KEMU_RUN_DISPLAY) && !M68KEmu_DisplayAttach(ctx)))
         {
             M68KEmu_DestroyContext(ctx);
             return NULL;

@@ -76,6 +76,17 @@ publish a license before this integration can be distributed.
   `INTENA` bit), `RemIntServer()` (disables it with the last server),
   `SetIntVector()`, and in Rigel mode `Disable()`/`Enable()` nesting on the
   contained `INTENA` master bit instead of the host.
+- **Display:** with `M68KEMU_RUN_DISPLAY`, every `RIGEL_EVENT_FRAME_READY`
+  hands the completed frame to the context's presenter
+  (`struct M68KEmuPresenter`). The AROS presenter (`m68kemu_display.c`)
+  opens a window on the default public screen at the first frame, resizes
+  it when the frame size changes (the first frame precedes the program's
+  display setup), copies frames with `WritePixelArray()`, paces to the
+  frame rate with `timer.device`, and stops the program with `RETURN_WARN`
+  on the close gadget, Escape or Ctrl-C. Window and timer belong to the
+  task that runs the program and are released when it returns.
+- **Launching:** `RunM68K [RIGEL] [DISPLAY] <file> [args]` selects the
+  chipset and the display; without switches it behaves as before.
 - **Logging:** Rigel's text log goes to the AROS debug log through
   `config.log_fn`; its structured trace events are discarded.
 - **Compatibility:** without `M68KEMU_RUN_RIGEL` the heap is not split, the
@@ -97,6 +108,17 @@ make test
 `test_rigel_integration` executes 68k code that calls a native LVO thunk,
 programs Rigel's Blitter through custom MMIO, and copies a word between two
 addresses in shared Chip RAM while chipset time advances from Moira cycles.
+
+`test_rigel_display` is the milestone 4 acceptance test. It runs
+`m68k/rigel_display.s` with a presenter that records frames, checks frame
+order and duration, locates the checkerboard and both colours, sees
+`COLOR01` change every frame, and stops a run early through the presenter.
+`M68KEMU_DUMP=file.ppm ./test_rigel_display` writes the last frame.
+
+On hosted AROS (linux-x86_64), `RunM68K DISPLAY rigel_display 1000` shows
+the animated checkerboard in a window. Measured there: about 5.3 ms of
+emulation and 0.3 ms of drawing per frame, the rest spent pacing, so the
+program runs at the PAL 50 Hz frame rate.
 
 `test_rigel_exec_irq` is the milestone 3 acceptance test. It checks server
 ordering and the non-Rigel API directly, runs `m68k/rigel_exec_irq.s`, and
@@ -226,6 +248,11 @@ and without `--enable-m68kemu-rigel`.
 
 ## Milestone 4: video presentation
 
+Status: implemented; `test_rigel_display` passes with the earlier milestone
+and legacy host tests, `kernel-m68kemu-library` builds with and without
+`--enable-m68kemu-rigel`, and the display program runs at 50 Hz in a window
+on hosted AROS.
+
 Milestones 1-3 run chipset programs headless; nothing a program draws is
 visible, and `dos.library` still starts Hunk executables without Rigel.
 This milestone shows Rigel's frames in a native AROS window and gives users
@@ -290,17 +317,27 @@ tests to pass, and `kernel-m68kemu-library` to build with and without
   (`PORTS`/`EXTER` from the CIAs) and native (non-68k) interrupt servers are
   not bridged. Interrupt nodes are tracked by address; a node must not be
   freed while installed.
-- **Video:** Rigel exposes completed frames and scanlines; no AROS graphics
-  presentation backend consumes them yet.
+- **Video:** frames are shown in a window as Rigel composes them. Screen
+  modes (hires, interlace, overscan) are untested, the window is not
+  scaled, and the frame's dirty-line information is not used. Closing the
+  window from a child process started with a non-zero `stackSize` cannot
+  see Ctrl-C, which goes to the parent shell.
+- **Input:** keyboard, mouse and joystick events do not reach Rigel.
 - **Audio:** Rigel exposes mixed Paula samples; no AHI/native audio backend is
   connected yet.
 - **Input, CIA, RTC, disk, and serial:** Rigel has APIs for these domains, but
   the bridge forwards only custom-register space.
-- **Rigel-side findings**, recorded in Rigel's own backlog:
-  - `ISSUE-0010`: frames reported as `RGBA8888` hold host-endian
-    `0x00RRGGBB`; `test_rigel_exec_irq` pins the layout the bridge relies on.
-  - `ISSUE-0011`: Copper write tracing is always on for the first 512 writes
-    with a process-wide counter; the bridge installs a discarding
-    `log_event_fn`.
-  - `ISSUE-0012`: the public headers have no `extern "C"` guards, so C++
-    callers wrap the include themselves.
+
+## Waiting on Rigel
+
+Findings recorded in Rigel's own backlog (`AI_context/issues/`). Each has a
+follow-up here once Rigel resolves it.
+
+| Rigel issue | Current workaround here | Follow-up once fixed in Rigel |
+| --- | --- | --- |
+| `ISSUE-0010` frames labelled `RGBA8888` are host `0x00RRGGBB` | `m68kemu_display.c` picks `RECTFMT_BGRA32`/`ARGB32` by host endianness; `test_rigel_exec_irq` pins the layout | Choose the `RECTFMT` from the format Rigel reports and update the pinned value |
+| `ISSUE-0011` Copper tracing always on, process-wide | `m68kemu_rigel.c` installs a `log_event_fn` that discards events | Keep the callback but drop the comment's workaround rationale, or forward events if they become opt-in |
+| `ISSUE-0012` no `extern "C"` in public headers | Host tests wrap `#include <rigel/rigel.h>` in `extern "C"` | Remove the wrappers |
+| `ISSUE-0013` no license | Integration cannot be distributed (see *Distribution blocker*) | Record the license here and in `README.md`; lift the blocker |
+| `ISSUE-0014` `rigel_get_clock_hz()` is the CPU rate | `present_frame()` converts at `rigel_get_clock_hz() / 2`, per `docs/timing_model.md` | Switch to the colour-clock accessor or context-aware conversion if one is added |
+| `ISSUE-0015` plain CMake build unoptimized; `cycle_exact` cost unmeasured | The AROS build passes `Release`; the host test `Makefile` now does too | Decide whether m68kemu enables `cycle_exact` once its cost is known |

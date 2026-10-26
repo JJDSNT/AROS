@@ -32,6 +32,37 @@ struct M68KEmuLibBase
 #ifndef M68KEMU_RUN_RIGEL
 #define M68KEMU_RUN_RIGEL       (1UL << 0)
 #endif
+#ifndef M68KEMU_RUN_DISPLAY
+#define M68KEMU_RUN_DISPLAY     (1UL << 1)
+#endif
+
+/* Exit code of a program stopped by its presenter (RETURN_WARN) */
+#define M68KEMU_EXIT_STOPPED    5
+
+struct M68KEmuContext;
+
+/* A completed chipset frame. Pixels are host-endian ULONG 0x00RRGGBB
+   (Rigel ISSUE-0010). */
+struct M68KEmuFrame
+{
+    const ULONG *pixels;
+    ULONG   width;
+    ULONG   height;
+    ULONG   pitch;          /* bytes between rows */
+    ULONG   number;         /* Rigel frame count, low 32 bits */
+    ULONG   frame_us;       /* duration of one frame of chipset time */
+};
+
+/* Receives every completed frame. present() returns FALSE to stop the
+   program. destroy() runs when M68KEmu_Execute() returns, in the task that
+   ran the program, or with the context if it never ran; it must clear the
+   presenter. */
+struct M68KEmuPresenter
+{
+    BOOL  (*present)(struct M68KEmuContext *ctx, const struct M68KEmuFrame *frame);
+    void  (*destroy)(struct M68KEmuContext *ctx);
+    APTR    data;
+};
 
 struct M68KHeapBlock
 {
@@ -121,6 +152,7 @@ struct M68KEmuContext
     ULONG   m68k_sysbase;
 
     BOOL    running;
+    BOOL    stopped;            /* ended early by the presenter */
     LONG    exit_code;
     /* Shadow struct mapping: m68k addr <-> native ptr */
     #define M68KEMU_MAX_SHADOWS 256
@@ -142,6 +174,7 @@ struct M68KEmuContext
 
 #ifdef M68KEMU_WITH_RIGEL
     APTR    rigel;
+    struct M68KEmuPresenter presenter;
 #endif
 };
 
@@ -249,6 +282,7 @@ void   M68KEmu_AutoOpenLibs(struct M68KEmuContext *ctx);
 #ifdef M68KEMU_WITH_RIGEL
 BOOL   M68KEmu_RigelInit(struct M68KEmuContext *ctx);
 void   M68KEmu_RigelDestroy(struct M68KEmuContext *ctx);
+BOOL   M68KEmu_DisplayAttach(struct M68KEmuContext *ctx);
 void   M68KEmu_RigelIntState(struct M68KEmuContext *ctx, UWORD *intena, UWORD *intreq);
 BOOL   M68KEmu_RigelRead(struct M68KEmuContext *ctx, ULONG addr,
                          UBYTE size, ULONG *value);
