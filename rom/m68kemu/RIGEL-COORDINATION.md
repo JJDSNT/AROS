@@ -1,26 +1,37 @@
-# m68kemu: the chipset backend and the high-level emulation
+# m68kemu: graphics calls when the chipset is emulated
 
-Hi terminills — thanks for the m68kemu series ([#1855](https://github.com/aros-development-team/AROS/pull/1855)–[#1859](https://github.com/aros-development-team/AROS/pull/1859)). I've been working on another part of m68kemu: an optional chipset backend that uses [Rigel](https://github.com/JJDSNT/rigel), an OCS chipset library, for programs that use the custom chips. It's on JJDSNT/AROS `feature/m68kemu-rigel` and is off by default (`--enable-m68kemu-rigel`, `RunHunkEx`/`RunFileEx` with `M68KEMU_RUN_RIGEL`). So far it covers Chip/Fast memory, Exec interrupt servers and handlers, the Copper, a display window, CIAs with keyboard and mouse, and Paula through AHI.
+Hi terminills — thanks for the m68kemu series ([#1855](https://github.com/aros-development-team/AROS/pull/1855)–[#1859](https://github.com/aros-development-team/AROS/pull/1859)). I've been working on an optional chipset backend for m68kemu. It uses [Rigel](https://github.com/JJDSNT/rigel), an OCS chipset library, lives on JJDSNT/AROS `feature/m68kemu-rigel`, and is off by default. It already runs Copper lists, bitplane DMA and the Blitter, and shows the chipset's frames in a window.
 
-Our two directions don't meet for programs that only use the OS, or for programs that take over the machine. They do meet for system-friendly programs that use the chipset:
+Before either of us builds more, I'd like to agree on one thing: how graphics calls are handled for programs that use the chipset while staying system-friendly. Some examples:
 
-- through the OS: HAM/EHB/dual-playfield screens, `UCopList`, sprites, `audio.device`, `ciab.resource`;
-- alongside it: `OwnBlitter` plus direct Blitter writes into their own screen, `audio.device` channels driven through the `AUDx` registers, `JOY1DAT`.
+- `OpenScreen` with HAM, EHB or dual playfield, `LoadRGB4`, `ScrollVPort`;
+- Copper effects through `UCopList`/`MrgCop`;
+- hardware sprites through `GetSprite`/`MoveSprite`/`ChangeSprite`;
+- `OwnBlitter`/`WaitBlit`, followed by direct Blitter writes into the program's own screen bitmap.
 
-The same program reaches the same hardware both ways, and I'd like to agree on a design before either of us builds more in that area. I see two candidates:
+In your series, `OpenScreen` gives the program a native screen, and its planes are mirrored from CPU writes. With the chipset backend, the same program's Copper lists, sprites and Blitter run on the emulated chipset. A Blitter write or a Copper effect never reaches a mirrored native screen, and a HAM screen has no native equivalent. So the question is: who implements these graphics calls when the program's display is the emulated chipset?
 
-- **A. One owner per run.** When a program starts, its display, Paula, CIAs, interrupts and input go either to your native path or to the chipset, never both. In chipset mode, m68kemu thunks implement the relevant calls directly on the chipset. It's small and self-contained. The cost is that system UI on a chipset screen (windows, gadgets, menus on a HAM screen) has to be reimplemented in m68kemu, or isn't available.
-- **B. The chipset as the shared truth.** Native Intuition and graphics stay in charge of deciding what to draw, but a chipset screen is a planar bitmap in the program's Chip RAM, shown by a display driver whose hardware is the emulated chipset. In the same way, the CIA resources run on the emulated CIAs. Sound needs little: Paula's output already goes to the host's AHI, where it mixes with your native `audio.device`. Only a program that starts a sound through `audio.device` and then pokes the same channel's registers would need `audio.device` on the emulated Paula. The AmigaOS arbitration APIs (`OwnBlitter`, `MrgCop`, `GetSprite`, audio allocation keys, `AddICRVector`) then let the OS and the program share the hardware, as on a real Amiga. This would reuse the amiga-m68k drivers (mainly `amigavideo.hidd`, plus `cia` and `potgo`), rehosted on the emulated chipset. It also builds on the generic `planarbm` class and `DDRV_ExternalPlanar`. Your `OpenScreen` would need no special path: a screen opened on that monitor would simply be a chipset screen. It's much more work: the drivers cast pointers to 32-bit DMA addresses, there's no public call to remove a display, and access to the chipset from several tasks needs serialising.
+## A. m68kemu implements them on the chipset
 
-They aren't exclusive. A could come first, with B as the route to full coexistence.
+When a program runs with the chipset, the graphics calls that touch its display (`OpenScreen` and its ViewPort, colours, `MrgCop`, sprites, blitter ownership) are m68kemu thunks working directly on the emulated chipset. They build the screen in the program's Chip RAM and its Copper list. Native screens and mirroring stay as they are for programs without the chipset.
 
-Either way, a few points in the series would help:
+- Small, and self-contained in m68kemu.
+- But the system's own rendering on a chipset screen (window borders, gadgets, menus, text drawn by Intuition) has to be reimplemented in m68kemu, or isn't available. That duplicates graphics and Intuition logic AROS already has.
 
-1. **Allocate anything a DMA engine reads with `MEMF_CHIP`.** That covers the screen planes `OpenScreen` allocates (currently `M68KEmu_HeapAlloc(ctx, size, 0)`), sprite data, Copper lists and audio buffers. It changes nothing without the chipset.
-2. **One interrupt model with two sources.** Your VERTB stub (`0x140`, vector `$6C`, host timer) overlaps my dispatcher stubs (`0x110–0x217`, full server chains plus `SetIntVector` handlers). I'd suggest one dispatcher, fed by your host-timer VBlank when there's no chipset and by the chipset when there is. I'm happy to do that on top of your series.
-3. **CIA decode order:** with the chipset, it gets `$A00000–$DFFFFF` first, and your stand-in handles everything else.
-4. **CPU model per run mode:** LC040 for FPU trapping, 68000 for A500 chipset programs.
+## B. Native graphics renders to a chipset monitor
 
-There's also a constraint that applies to both designs. `Wait()`/`WaitPort()` block natively, so the chipset stops in time while the program waits, which means Copper effects and sound freeze. That needs solving on my side regardless of which design we pick.
+The emulated chipset becomes an AROS display: a driver whose hardware is the emulated chipset and whose screens are planar bitmaps in the program's Chip RAM. Native graphics and Intuition do all the work, as they would on a real Amiga. A screen opened on that monitor is a chipset screen. `MrgCop` merges the program's `UCopList` into the driver's list, `GetSprite` allocates the chipset's sprites, and `OwnBlitter` arbitrates the chipset's Blitter. The program's direct register writes then land on the same chipset the system draws with.
 
-The details and evidence are in [`RIGEL.md`](RIGEL.md#coexistence-with-the-high-level-emulation) ("Coexistence with the high-level emulation"), next to this file. Which direction makes more sense to you?
+- Real coexistence: system UI on chipset screens, and programs mixing graphics calls and registers.
+- `OpenScreen` in your series needs no special path. Opening the screen on that monitor is the whole difference.
+- It reuses the amiga-m68k `amigavideo.hidd` rehosted on the emulated chipset, the generic `planarbm` class, and `DDRV_ExternalPlanar`.
+- Much more work. The driver turns native pointers into 32-bit DMA addresses (planes, sprites, Copper lists), there's no public call to remove a display, and the chipset is reached from several tasks.
+
+The two aren't exclusive: A could come first, with B as the route to full coexistence.
+
+## What would help in either case
+
+- Screen planes (and anything else the chipset reads) allocated with `MEMF_CHIP`. `OpenScreen` currently uses `M68KEmu_HeapAlloc(ctx, size, 0)`. Without the chipset this changes nothing.
+- A single place where `OpenScreen` decides between a native screen and a chipset screen, so the rest of the graphics calls follow that screen.
+
+The details and the evidence from the code are in [`RIGEL.md`](RIGEL.md#coexistence-with-the-high-level-emulation), next to this file. Which direction makes more sense to you?
