@@ -175,6 +175,79 @@ Rigel's `scripts/m68k` wrapper:
 make fixtures
 ```
 
+## Coexistence with the high-level emulation
+
+`m68kemu.library` grows in two directions. The high-level one (the series
+from upstream pull requests #1855-#1859) runs system-friendly programs on
+native AROS: screens become native screens with mirrored bitplanes,
+`audio.device` and `gameport.device` get native twins, and where programs
+touch hardware there are light stand-ins (a CIA with timers derived from
+the E clock, a 50 Hz VBlank from the host timer). The Rigel direction runs
+the chipset itself. Programs fall into three groups:
+
+1. **Operating system only** (windows, menus, gadgets): high-level
+   emulation alone; Rigel is not involved.
+2. **System-friendly programs that use the chipset**, through the system or
+   beside it. This is where the two directions meet:
+   - through the system: HAM, EHB or dual-playfield screens from
+     Intuition, Copper effects with `UCopList`/`MrgCop`, hardware sprites
+     with `GetSprite`/`MoveSprite`, `BltBitMap`, `audio.device`,
+     `ciab.resource` timers;
+   - beside it: `OwnBlitter()` and direct Blitter writes into the program's
+     own screen bitmap, channels allocated from `audio.device` and then
+     driven through `AUDxPER`/`AUDxVOL`, reading `JOY1DAT` or CIA-A `PRA`
+     directly.
+3. **Programs that take the machine over**: Rigel alone. Running WHDLoad
+   *slaves* with `m68kemu.library` as the WHDLoad host (providing the
+   `resload_*` API natively, Rigel as the chipset) is a possible future
+   route for installed games.
+
+### Ownership rule for group 2
+
+A group 2 program uses the same API calls and registers for one piece of
+hardware, so each subsystem needs exactly one owner per run, chosen when
+the program starts:
+
+| Subsystem | Without Rigel | With Rigel |
+| --- | --- | --- |
+| Display: screens, ViewPorts, colours, Copper, sprites | native screens, mirrored planes | screens built in Chip RAM and shown from Rigel's frames |
+| Paula: `audio.device` and `AUDx` registers | native `audio.device` | `audio.device` allocates Rigel's channels; output from Rigel |
+| CIAs: `ciaa`/`ciab.resource` and registers | CIA stand-in | Rigel's CIAs |
+| Interrupts and VBlank | 50 Hz host-timer VBlank | Rigel's interrupt requests |
+| Input: `gameport.device`, `JOYxDAT`, buttons | native devices | Rigel's ports fed from the host |
+
+Never both in one run: a native screen mirrored from CPU writes cannot show
+what the Blitter or the Copper did, and a native `audio.device` cannot play
+what a program then writes into Paula's registers.
+
+### Points to agree with the high-level series
+
+Found by reading #1856-#1859 against this branch:
+
+- **Screen planes in Chip RAM.** `OpenScreen` allocates the planes with
+  `M68KEmu_HeapAlloc(ctx, size, 0)`; anything a DMA engine reads (planes,
+  sprite data, Copper lists, audio buffers) should ask for `MEMF_CHIP`,
+  which costs nothing without Rigel.
+- **Who draws the screen.** Plane mirroring hooks CPU writes
+  (`m68k_planar_touch`), so DMA writes never reach the native screen; in
+  Rigel mode the screen should come from Rigel's frames instead.
+- **One interrupt model, two sources.** The series installs a single VERTB
+  server driven by the host timer, with a stub at `0x140-0x177` and vector
+  `$6C`; this branch runs full Exec server chains and `SetIntVector`
+  handlers from dispatchers at `0x110-0x217`. One dispatcher fed by either
+  the host-timer VBlank or Rigel avoids two competing implementations (and
+  the overlapping low-memory addresses).
+- **CIA access.** The stand-in CIA decodes `$BFxxxx` in the CPU bus; with
+  Rigel the whole I/O space goes to Rigel first, the stand-in serves the
+  rest.
+- **Devices and resources.** `audio.device`, `gameport.device` and
+  `OpenResource()` need a Rigel-mode path chosen by the same per-run owner,
+  for example a Rigel override table consulted before the high-level
+  thunks.
+- **CPU model.** The series selects the 68LC040 so FPU instructions trap;
+  chipset programs for the A500 expect a 68000, so the model should follow
+  the run mode.
+
 ## Milestone 2: Chip RAM allocation and interrupts
 
 Status: implemented; `test_rigel_chip_irq` passes with the legacy host tests
