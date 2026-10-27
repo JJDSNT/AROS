@@ -1,6 +1,6 @@
 # m68kemu: the chipset backend and the high-level emulation
 
-Hi terminills — thanks for the m68kemu series (#1855–#1859). I've been working on another part of m68kemu: an optional chipset backend that uses [Rigel](https://github.com/JJDSNT/rigel), an OCS chipset library, for programs that use the custom chips. It's on JJDSNT/AROS `feature/m68kemu-rigel` and is off by default (`--enable-m68kemu-rigel`, `RunHunkEx`/`RunFileEx` with `M68KEMU_RUN_RIGEL`). So far it covers Chip/Fast memory, Exec interrupt servers and handlers, the Copper, a display window, CIAs with keyboard and mouse, and Paula through AHI.
+Hi terminills — thanks for the m68kemu series ([#1855](https://github.com/aros-development-team/AROS/pull/1855)–[#1859](https://github.com/aros-development-team/AROS/pull/1859)). I've been working on another part of m68kemu: an optional chipset backend that uses [Rigel](https://github.com/JJDSNT/rigel), an OCS chipset library, for programs that use the custom chips. It's on JJDSNT/AROS `feature/m68kemu-rigel` and is off by default (`--enable-m68kemu-rigel`, `RunHunkEx`/`RunFileEx` with `M68KEMU_RUN_RIGEL`). So far it covers Chip/Fast memory, Exec interrupt servers and handlers, the Copper, a display window, CIAs with keyboard and mouse, and Paula through AHI.
 
 Our two directions don't meet for programs that only use the OS, or for programs that take over the machine. They do meet for system-friendly programs that use the chipset:
 
