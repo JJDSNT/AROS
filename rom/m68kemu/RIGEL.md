@@ -177,76 +177,145 @@ make fixtures
 
 ## Coexistence with the high-level emulation
 
-`m68kemu.library` grows in two directions. The high-level one (the series
-from upstream pull requests #1855-#1859) runs system-friendly programs on
-native AROS: screens become native screens with mirrored bitplanes,
+`m68kemu.library` grows in two directions. The high-level one (upstream pull
+requests #1855-#1859) runs system-friendly programs on native AROS: screens
+become native screens whose planes are mirrored from CPU writes,
 `audio.device` and `gameport.device` get native twins, and where programs
-touch hardware there are light stand-ins (a CIA with timers derived from
-the E clock, a 50 Hz VBlank from the host timer). The Rigel direction runs
-the chipset itself. Programs fall into three groups:
+touch hardware there are light stand-ins (a CIA with timers derived from the
+E clock, a 50 Hz VBlank from the host timer). The Rigel direction runs the
+chipset itself. Programs fall into three groups:
 
 1. **Operating system only** (windows, menus, gadgets): high-level
    emulation alone; Rigel is not involved.
 2. **System-friendly programs that use the chipset**, through the system or
-   beside it. This is where the two directions meet:
+   beside it:
    - through the system: HAM, EHB or dual-playfield screens from
      Intuition, Copper effects with `UCopList`/`MrgCop`, hardware sprites
      with `GetSprite`/`MoveSprite`, `BltBitMap`, `audio.device`,
      `ciab.resource` timers;
    - beside it: `OwnBlitter()` and direct Blitter writes into the program's
      own screen bitmap, channels allocated from `audio.device` and then
-     driven through `AUDxPER`/`AUDxVOL`, reading `JOY1DAT` or CIA-A `PRA`
-     directly.
+     driven through `AUDxPER`/`AUDxVOL`, reading `JOY1DAT` or CIA-A `PRA`.
 3. **Programs that take the machine over**: Rigel alone. Running WHDLoad
-   *slaves* with `m68kemu.library` as the WHDLoad host (providing the
-   `resload_*` API natively, Rigel as the chipset) is a possible future
-   route for installed games.
+   *slaves* with `m68kemu.library` as the WHDLoad host (the `resload_*` API
+   provided natively, Rigel as the chipset) is a possible future route.
 
-### Ownership rule for group 2
+Group 2 is the open question: the same program reaches one piece of
+hardware both through system calls, which the high-level emulation turns
+into native operations, and through registers, which reach Rigel. Two
+designs are on the table.
 
-A group 2 program uses the same API calls and registers for one piece of
-hardware, so each subsystem needs exactly one owner per run, chosen when
-the program starts:
+### Prerequisite for either design: chipset time while the program waits
+
+System-friendly programs spend most of their time in `Wait()` or
+`WaitPort()`. Those thunks call the native functions and block, so the CPU
+loop stops, and with it Rigel's time: a Copper effect, a playing sample or
+a CIA timer freezes until the program wakes. Group 2 needs the chipset to
+advance in real time while the CPU waits, for example by stepping Rigel to
+wall-clock time from the blocking thunks or from a chipset task, and
+delivering interrupts to the program when it resumes. This applies to
+both designs below.
+
+### Option A: one owner per run
+
+Each subsystem shared by the two paths (display, Paula, CIAs, interrupts,
+input) is owned by exactly one side, chosen when the program starts:
 
 | Subsystem | Without Rigel | With Rigel |
 | --- | --- | --- |
-| Display: screens, ViewPorts, colours, Copper, sprites | native screens, mirrored planes | screens built in Chip RAM and shown from Rigel's frames |
-| Paula: `audio.device` and `AUDx` registers | native `audio.device` | `audio.device` allocates Rigel's channels; output from Rigel |
-| CIAs: `ciaa`/`ciab.resource` and registers | CIA stand-in | Rigel's CIAs |
-| Interrupts and VBlank | 50 Hz host-timer VBlank | Rigel's interrupt requests |
-| Input: `gameport.device`, `JOYxDAT`, buttons | native devices | Rigel's ports fed from the host |
+| Display | native screens, mirrored planes | screens built by m68kemu in Chip RAM, shown from Rigel's frames |
+| Paula | native `audio.device` | `audio.device` thunks allocate Rigel's channels |
+| CIAs | CIA stand-in | Rigel's CIAs, `ciaa`/`ciab.resource` thunks on them |
+| Interrupts | 50 Hz host-timer VBlank | Rigel's interrupt requests |
+| Input | native devices | Rigel's ports fed from the host |
 
-Never both in one run: a native screen mirrored from CPU writes cannot show
-what the Blitter or the Copper did, and a native `audio.device` cannot play
-what a program then writes into Paula's registers.
+- **How:** a Rigel-mode override table consulted before the high-level
+  thunks; the CPU bus gives Rigel the I/O space first.
+- **For:** small and self-contained in `m68kemu.library`; does not depend on
+  the high-level series beyond the override seam; works today for group 3
+  and for group 2 programs that keep their display and sound to the
+  chipset.
+- **Against:** in Rigel mode the system's own rendering on a chipset screen
+  (window borders, gadgets, text, menus) must be reimplemented by m68kemu
+  thunks or is unavailable, so a program that opens Intuition windows on
+  its HAM screen does not work. It duplicates operating system logic
+  already in AROS.
 
-### Points to agree with the high-level series
+### Option B: the chipset as the shared truth
 
-Found by reading #1856-#1859 against this branch:
+State the program reaches by both paths lives once, on the chipset, and the
+native system becomes a client of the chipset, as on a real Amiga: native
+Intuition and graphics keep deciding what to draw, but a chipset screen's
+pixels go into planes in Chip RAM that Rigel displays, `audio.device`
+allocates and plays Paula's channels, and the CIA resources run on Rigel's
+CIAs. The truth cannot be the native side, because chipset effects (HAM,
+Copper, sprites, DMA writes) have no native representation, while
+everything the native side does can be done on the chipset.
 
-- **Screen planes in Chip RAM.** `OpenScreen` allocates the planes with
-  `M68KEmu_HeapAlloc(ctx, size, 0)`; anything a DMA engine reads (planes,
-  sprite data, Copper lists, audio buffers) should ask for `MEMF_CHIP`,
-  which costs nothing without Rigel.
-- **Who draws the screen.** Plane mirroring hooks CPU writes
-  (`m68k_planar_touch`), so DMA writes never reach the native screen; in
-  Rigel mode the screen should come from Rigel's frames instead.
-- **One interrupt model, two sources.** The series installs a single VERTB
-  server driven by the host timer, with a stub at `0x140-0x177` and vector
-  `$6C`; this branch runs full Exec server chains and `SetIntVector`
-  handlers from dispatchers at `0x110-0x217`. One dispatcher fed by either
-  the host-timer VBlank or Rigel avoids two competing implementations (and
-  the overlapping low-memory addresses).
-- **CIA access.** The stand-in CIA decodes `$BFxxxx` in the CPU bus; with
-  Rigel the whole I/O space goes to Rigel first, the stand-in serves the
-  rest.
-- **Devices and resources.** `audio.device`, `gameport.device` and
-  `OpenResource()` need a Rigel-mode path chosen by the same per-run owner,
-  for example a Rigel override table consulted before the high-level
-  thunks.
-- **CPU model.** The series selects the 68LC040 so FPU instructions trap;
-  chipset programs for the A500 expect a 68000, so the model should follow
-  the run mode.
+The two sides share hardware through the arbitration AmigaOS already has,
+because a real Amiga's system and programs shared one chipset:
+`OwnBlitter`/`WaitBlit`, `MrgCop` merging a `UCopList` into the system's
+list, `GetSprite`, `audio.device` allocation keys, `AddICRVector`, Exec
+interrupt server chains. Programs that bypass it would also break a real
+Amiga's system; they belong to group 3.
+
+- **How:** the chipset-facing drivers of the amiga-m68k port, rehosted
+  natively on Rigel and registered for a program's run: a display driver
+  whose screens are planar bitmaps in the program's Chip RAM, a Paula
+  `audio.device` unit, the CIA and POTGO resources. Native rendering into
+  those planes uses the generic `planarbm` class. The high-level
+  `OpenScreen` then needs no special path: a screen opened on the chipset
+  monitor is a chipset screen.
+- **For:** true coexistence in one run, including system UI on chipset
+  screens and programs that mix calls and registers; reuses AROS's drivers
+  and the system's arbitration instead of writing new copies; the
+  high-level series stays almost unchanged.
+- **Against:** much more work, and parts of it touch AROS outside
+  `m68kemu.library`.
+
+What the amiga-m68k code and graphics.library show today:
+
+| Need | State | Evidence |
+| --- | --- | --- |
+| Display driver on Rigel | ~7,200 lines; ~115 direct register accesses through `(struct Custom *)0xdff000`; DMA addresses made by casting native pointers to `ULONG` (planes, sprites, Copper lists), which must become Chip RAM offsets on a 64-bit host; one inline 68k assembly helper; Chip RAM from native `AllocMem(MEMF_CHIP)` | `arch/m68k-amiga/hidd/amigavideo` |
+| Native drawing into Chip RAM planes | available: the generic planar bitmap class can wrap an existing `BitMap` | `rom/hidds/gfx/gfx_planarbitmapclass.c`, `aoHidd_PlanarBM_BitMap` |
+| Screens whose planes the caller owns | available on AmigaVideo since September 2026 | `DDRV_ExternalPlanar`, commit e3ac66f33a |
+| A monitor per program | adding: `AddDisplayDriverA()`; removing: no public call, only the boot-display handover path expunges a display | `rom/graphics/adddisplaydrivera.c`, `graphics_driver.c` |
+| Paula `audio.device` | ~24 hardware accesses, C | `arch/m68k-amiga/devs/audio/audio_hardware.c` |
+| AHI Paula driver | 68k assembly, not reusable | `workbench/devs/AHI/Drivers/Paula/paula_audio.a` |
+| CIA and POTGO resources | a handful of hardware accesses, C | `arch/m68k-amiga/cia`, `arch/m68k-amiga/potgo` |
+
+It also needs, beyond the drivers:
+
+- **Chip RAM for native code:** the rehosted drivers allocate from, and
+  translate pointers into, the program's containment Chip heap.
+- **Concurrency:** the drivers run in other tasks (Intuition, input) while
+  the program's task steps Rigel; access to a Rigel context must be
+  serialised.
+- **Native interrupt servers:** the drivers install native VERTB/COPER
+  servers; the dispatcher must run native chains as well as 68k ones.
+- **Monitor lifecycle:** one chipset monitor that attaches to the running
+  program, or a graphics.library call to remove a display.
+- **Unverified:** how Intuition moves the pointer onto a monitor added at
+  run time.
+
+### How the options compare
+
+| | Option A | Option B |
+| --- | --- | --- |
+| Group 2 with system UI on chipset screens | no | yes |
+| Group 2 mixing calls and registers | partly (where m68kemu's thunks implement the call on Rigel) | yes |
+| Code outside `m68kemu.library` | none | AROS drivers rehosted, graphics.library additions |
+| Duplicated operating system logic | yes, grows with coverage | no |
+| Depends on the high-level series | only the override seam | Intuition/graphics routing screens to the chipset monitor |
+| Effort | small to medium | large |
+
+They are not exclusive: Option A's override seam can be the first step and
+cover group 3 and simple group 2 programs, while Option B is the route to
+full coexistence. What to agree with the high-level series is the same in
+both cases: allocate DMA-visible memory with `MEMF_CHIP`, one interrupt
+model with two sources (and no overlapping low-memory stubs), Rigel before
+the CIA stand-in on the bus, and the CPU model following the run mode.
 
 ## Milestone 2: Chip RAM allocation and interrupts
 
@@ -514,6 +583,9 @@ Completion requires this test and all earlier host tests to pass, and
 
 ## Remaining work
 
+- **Chipset time while waiting:** `Wait()`/`WaitPort()` block natively, so
+  Rigel stops advancing while a program waits; displays, sounds and CIA
+  timers freeze until it wakes (see *Coexistence*, prerequisite).
 - **Remaining Hunk blocks:** the loader handles `HUNK_RELOC32`,
   `HUNK_RELOC32SHORT`, `HUNK_DREL32` (V37 short form), `HUNK_RELRELOC32`, and
   skips `HUNK_SYMBOL`, `HUNK_DEBUG` and `HUNK_NAME`. `HUNK_ABSRELOC16`,
