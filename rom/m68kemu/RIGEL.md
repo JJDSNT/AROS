@@ -246,9 +246,16 @@ input) is owned by exactly one side, chosen when the program starts:
 State the program reaches by both paths lives once, on the chipset, and the
 native system becomes a client of the chipset, as on a real Amiga: native
 Intuition and graphics keep deciding what to draw, but a chipset screen's
-pixels go into planes in Chip RAM that Rigel displays, `audio.device`
-allocates and plays Paula's channels, and the CIA resources run on Rigel's
-CIAs. The truth cannot be the native side, because chipset effects (HAM,
+pixels go into planes in Chip RAM that Rigel displays, and the CIA
+resources run on Rigel's CIAs.
+
+Sound needs much less. Paula's output already reaches the host's AHI
+through the bridge, and the native `audio.device` plays through AHI too, so
+the two mix at the host whichever path a program uses. Allocating a channel
+from `audio.device` and then playing it only through `AUDx` registers works
+as it is. Only a program that starts a sound through `audio.device` and
+then changes the same channel's registers needs `audio.device` to play on
+the emulated Paula. The truth cannot be the native side, because chipset effects (HAM,
 Copper, sprites, DMA writes) have no native representation, while
 everything the native side does can be done on the chipset.
 
@@ -261,8 +268,8 @@ Amiga's system; they belong to group 3.
 
 - **How:** the chipset-facing drivers of the amiga-m68k port, rehosted
   natively on Rigel and registered for a program's run: a display driver
-  whose screens are planar bitmaps in the program's Chip RAM, a Paula
-  `audio.device` unit, the CIA and POTGO resources. Native rendering into
+  whose screens are planar bitmaps in the program's Chip RAM, and the CIA
+  and POTGO resources. Native rendering into
   those planes uses the generic `planarbm` class. The high-level
   `OpenScreen` then needs no special path: a screen opened on the chipset
   monitor is a chipset screen.
@@ -281,8 +288,7 @@ What the amiga-m68k code and graphics.library show today:
 | Native drawing into Chip RAM planes | available: the generic planar bitmap class can wrap an existing `BitMap` | `rom/hidds/gfx/gfx_planarbitmapclass.c`, `aoHidd_PlanarBM_BitMap` |
 | Screens whose planes the caller owns | available on AmigaVideo since September 2026 | `DDRV_ExternalPlanar`, commit e3ac66f33a |
 | A monitor per program | adding: `AddDisplayDriverA()`; removing: no public call, only the boot-display handover path expunges a display | `rom/graphics/adddisplaydrivera.c`, `graphics_driver.c` |
-| Paula `audio.device` | ~24 hardware accesses, C | `arch/m68k-amiga/devs/audio/audio_hardware.c` |
-| AHI Paula driver | 68k assembly, not reusable | `workbench/devs/AHI/Drivers/Paula/paula_audio.a` |
+| Paula `audio.device`, only if needed (see below) | ~24 hardware accesses, C | `arch/m68k-amiga/devs/audio/audio_hardware.c` |
 | CIA and POTGO resources | a handful of hardware accesses, C | `arch/m68k-amiga/cia`, `arch/m68k-amiga/potgo` |
 
 It also needs, beyond the drivers:
