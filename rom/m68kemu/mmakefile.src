@@ -47,8 +47,11 @@ M68KEMU_CXXFILES := \
 M68KEMU_USELIBS := stdc++ posixc stdcio stdc
 
 ifeq ($(M68KEMU_RIGEL),yes)
+# devices/ahi.h is used straight from the AHI sources: the display
+# presenter needs only its declarations, not a built AHI
 USER_CPPFLAGS += -DM68KEMU_WITH_RIGEL=1 \
-    -I$(SRCDIR)/$(CURDIR)/Rigel/include
+    -I$(SRCDIR)/$(CURDIR)/Rigel/include \
+    -I$(SRCDIR)/workbench/devs/AHI/Include/C
 M68KEMU_FILES += m68kemu_rigel m68kemu_display
 M68KEMU_USELIBS += rigel
 

@@ -93,6 +93,14 @@ publish a license before this integration can be distributed.
   and handed to Rigel one per frame. The display window forwards its raw
   keys (without auto-repeat), mouse movement and buttons; Escape is an
   ordinary key.
+- **Audio:** with a presenter `audio_rate`, the bridge samples
+  `rigel_get_audio_sample()` at that rate of chipset time (CPU cycles
+  against `rigel_get_clock_hz()`) and hands each frame's interleaved 16-bit
+  stereo batch to `presenter.audio()` before the frame. The AROS presenter
+  streams it at 22050 Hz to `ahi.device` unit 0 with four chained
+  `CMD_WRITE` requests, and runs silently when no AHI unit opens. The AHI
+  declarations come from `workbench/devs/AHI/Include/C`, so building the
+  library needs no built AHI.
 - **Launching:** `RunM68K [RIGEL] [DISPLAY] <file> [args]` selects the
   chipset and the display; without switches it behaves as before.
 - **Logging:** Rigel's text log goes to the AROS debug log through
@@ -116,6 +124,14 @@ make test
 `test_rigel_integration` executes 68k code that calls a native LVO thunk,
 programs Rigel's Blitter through custom MMIO, and copies a word between two
 addresses in shared Chip RAM while chipset time advances from Moira cycles.
+
+`test_rigel_audio` is the milestone 6 acceptance test. It runs
+`m68k/rigel_audio.s` with a presenter that records audio and checks 440-441
+samples per frame at 22050 Hz, initial silence, a 440 Hz tone on the left
+and silence on the right. The program's block-interrupt count is an
+expected failure until Rigel `ISSUE-0018` is fixed; a patched Rigel copy
+passes it with 440 interrupts per second. `M68KEMU_WAV=file.wav` writes the
+recorded audio.
 
 `test_rigel_input` is the milestone 5 acceptance test. It checks that the
 Fast heap never reaches the I/O space, then runs `m68k/rigel_input.s`,
@@ -374,6 +390,12 @@ Completion requires this test and all earlier host tests to pass, and
 
 ## Milestone 6: audio
 
+Status: implemented, with one item waiting on Rigel: `test_rigel_audio`
+passes except the channel interrupt count, which Rigel never raises
+(`ISSUE-0018`). On hosted AROS the program runs with its window; the test
+install had no configured AHI unit, so the presenter ran silently and
+audible output there is unverified.
+
 Programs can draw and read input, but Paula's output goes nowhere. This
 milestone samples Rigel's mixed audio at a host rate and plays it through
 AHI next to the display window.
@@ -442,8 +464,10 @@ Completion requires this test and all earlier host tests to pass, and
   power-up sequences are not sent.
 - **CIA resources:** `ciaa.resource`/`ciab.resource` (`AddICRVector()` and
   friends) are not emulated; programs that read the CIAs directly work.
-- **Audio:** Rigel exposes mixed Paula samples; no AHI/native audio backend is
-  connected yet.
+- **Audio:** Paula's audio interrupts are not raised by Rigel
+  (`ISSUE-0018`), so interrupt-driven players do not advance. No audio
+  filters, no per-voice output, a fixed 22050 Hz rate and AHI unit 0, and
+  audio/video sync only per frame.
 - **RTC, disk, and serial:** Rigel has APIs for these domains; their
   registers are reachable through the I/O space, but no host side (disk
   images, a serial port) is connected.
@@ -462,3 +486,5 @@ follow-up here once Rigel resolves it.
 | `ISSUE-0014` `rigel_get_clock_hz()` is the CPU rate | `present_frame()` converts at `rigel_get_clock_hz() / 2`, per `docs/timing_model.md` | Switch to the colour-clock accessor or context-aware conversion if one is added |
 | `ISSUE-0015` plain CMake build unoptimized; `cycle_exact` cost unmeasured | The AROS build passes `Release`; the host test `Makefile` now does too | Decide whether m68kemu enables `cycle_exact` once its cost is known |
 | `ISSUE-0016` keyboard injection without queue or handshake | `m68kemu_rigel.c` queues keys and delivers one per frame | Inject keys as they arrive and drop the bridge queue |
+| `ISSUE-0017` no audio stream | `sample_audio()` polls `rigel_get_audio_sample()` per step | Read Rigel's stream and drop the accumulator |
+| `ISSUE-0018` audio interrupts never raised | `test_rigel_audio` reports the count as XFAIL | Expect the count to pass and remove the XFAIL branch |

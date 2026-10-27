@@ -91,7 +91,14 @@ BOOL M68KEmu_RigelInit(struct M68KEmuContext *ctx)
 
 void M68KEmu_RigelDestroy(struct M68KEmuContext *ctx)
 {
-    if (!ctx || !ctx->rigel)
+    if (!ctx)
+        return;
+    if (ctx->audio_buf)
+    {
+        FreeVec(ctx->audio_buf);
+        ctx->audio_buf = NULL;
+    }
+    if (!ctx->rigel)
         return;
     rigel_destroy((RigelContext *)ctx->rigel);
     ctx->rigel = NULL;
@@ -205,6 +212,50 @@ void M68KEmu_RigelInputButtons(struct M68KEmuContext *ctx, BOOL left, BOOL right
     rigel_input_set_pot_button_y((RigelContext *)ctx->rigel, 0, right != FALSE);
 }
 
+/* ── Audio ────────────────────────────────────────────────────────── */
+
+/*
+ * Take presenter.audio_rate samples per second of chipset time. The bridge
+ * steps in CPU cycles, and rigel_get_clock_hz() is the CPU rate, so CPU
+ * cycles accumulate against it. Like Rigel's own harness, every sample
+ * due within one step carries the level after that step (Rigel offers no
+ * stream yet, ISSUE-0017).
+ */
+static void sample_audio(struct M68KEmuContext *ctx, unsigned long long cycles)
+{
+    rigel_audio_sample_t s;
+
+    if (!ctx->audio_buf)
+    {
+        ctx->audio_clock = rigel_get_clock_hz((RigelContext *)ctx->rigel);
+        ctx->audio_cap   = ctx->presenter.audio_rate / 25 + 64; /* 2 frames */
+        ctx->audio_buf   = AllocVec(ctx->audio_cap * 2 * sizeof(WORD), MEMF_ANY);
+        if (!ctx->audio_buf || !ctx->audio_clock)
+        {
+            ctx->presenter.audio = NULL;    /* give up on audio, keep running */
+            return;
+        }
+    }
+
+    ctx->audio_acc += cycles * ctx->presenter.audio_rate;
+    if (ctx->audio_acc < ctx->audio_clock)
+        return;
+
+    s = rigel_get_audio_sample((const RigelContext *)ctx->rigel);
+    while (ctx->audio_acc >= ctx->audio_clock)
+    {
+        ctx->audio_acc -= ctx->audio_clock;
+        if (ctx->audio_frames < ctx->audio_cap)
+        {
+            ctx->audio_buf[ctx->audio_frames * 2]     = s.left;
+            ctx->audio_buf[ctx->audio_frames * 2 + 1] = s.right;
+            ctx->audio_frames++;
+        }
+        else
+            ctx->audio_dropped++;
+    }
+}
+
 void M68KEmu_RigelStepCPU(struct M68KEmuContext *ctx,
                           unsigned long long cycles)
 {
@@ -214,9 +265,16 @@ void M68KEmu_RigelStepCPU(struct M68KEmuContext *ctx,
         return;
     result = rigel_step_cpu_cycles((RigelContext *)ctx->rigel,
                                    (rigel_u64)cycles);
+    if (ctx->presenter.audio && ctx->presenter.audio_rate)
+        sample_audio(ctx, cycles);
     if (result.events & RIGEL_EVENT_FRAME_READY)
     {
         deliver_key(ctx);
+        if (ctx->presenter.audio && ctx->audio_frames)
+        {
+            ctx->presenter.audio(ctx, ctx->audio_buf, ctx->audio_frames);
+            ctx->audio_frames = 0;
+        }
         if (ctx->presenter.present)
             present_frame(ctx);
     }

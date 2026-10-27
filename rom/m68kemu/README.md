@@ -436,6 +436,7 @@ grep -oP '(OFF|SIZ)\|[^"]*' m68k.s | sed 's/#//g' > m68k_offsets.txt
 | `developer/debug/test/m68kemu_host/test_hello_thunks.cpp` | Host-side end-to-end: A-line trap → thunk dispatch → return |
 | `developer/debug/test/m68kemu_host/test_rigel_integration.cpp` | Moira + native LVO + Rigel MMIO/timing/shared Chip RAM proof |
 | `developer/debug/test/m68kemu_host/test_rigel_chip_irq.cpp` | Rigel milestone 2: Chip/Fast heap, Hunk memory attributes, Blitter interrupt to a 68k autovector handler |
+| `developer/debug/test/m68kemu_host/test_rigel_audio.cpp` | Rigel milestone 6: Paula audio sampled at 22050 Hz, tone and routing checks |
 | `developer/debug/test/m68kemu_host/test_rigel_input.cpp` | Rigel milestone 5: I/O space, CIA-A keyboard/timer, mouse and buttons |
 | `developer/debug/test/m68kemu_host/test_rigel_display.cpp` | Rigel milestone 4: frame pump to a recording presenter, checkerboard display, early stop |
 | `developer/debug/test/m68kemu_host/test_rigel_exec_irq.cpp` | Rigel milestone 3: Exec interrupt servers/handlers, Disable/Enable, Copper frame |

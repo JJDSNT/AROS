@@ -5,8 +5,9 @@
 
     Opens a window on the default public screen at the first completed
     frame, copies every frame into it, paces the program to the chipset's
-    frame rate, feeds the window's keyboard and mouse to the chipset, and
-    stops the program on the close gadget or Ctrl-C.
+    frame rate, feeds the window's keyboard and mouse to the chipset,
+    plays the chipset's audio through AHI, and stops the program on the
+    close gadget or Ctrl-C.
 */
 
 #include <aros/debug.h>
@@ -15,6 +16,7 @@
 #include <exec/io.h>
 #include <devices/timer.h>
 #include <dos/dos.h>
+#include <devices/ahi.h>
 #include <devices/inputevent.h>
 #include <intuition/intuition.h>
 #include <cybergraphx/cybergraphics.h>
@@ -25,6 +27,9 @@
 #include "m68kemu_intern.h"
 
 #define RESYNC_FRAMES       5       /* drop pacing debt beyond this */
+#define AUDIO_RATE          22050
+#define AUDIO_BUFFERS       4       /* chained AHI writes in flight */
+#define AUDIO_BUFFER_FRAMES 2048    /* stereo frames per write, > one frame */
 
 /* Rigel frames are host ULONG 0x00RRGGBB (Rigel ISSUE-0010) */
 #if AROS_BIG_ENDIAN
@@ -50,6 +55,17 @@ struct M68KEmuDisplay
     BOOL                timer_tried;
     struct timeval      next;
     BOOL                have_next;
+
+    /* AHI stream: AUDIO_BUFFERS requests written in turn, each linked to
+       the previous one so playback is gapless */
+    BOOL                ahi_tried;
+    BOOL                ahi_open;
+    struct MsgPort     *ahi_port;
+    struct AHIRequest  *ahi_req[AUDIO_BUFFERS];
+    WORD               *ahi_buf[AUDIO_BUFFERS];
+    BOOL                ahi_busy[AUDIO_BUFFERS];
+    UBYTE               ahi_next;
+    struct AHIRequest  *ahi_last;
 };
 
 static void tv_add_us(struct timeval *tv, ULONG us)
@@ -107,6 +123,115 @@ static void pace(struct M68KEmuDisplay *d, ULONG frame_us)
         d->next = now;
     }
     tv_add_us(&d->next, frame_us);
+}
+
+/* ── Audio ────────────────────────────────────────────────────────── */
+
+static void close_audio(struct M68KEmuDisplay *d)
+{
+    UBYTE i;
+
+    for (i = 0; i < AUDIO_BUFFERS; i++)
+    {
+        if (d->ahi_busy[i])
+        {
+            AbortIO((struct IORequest *)d->ahi_req[i]);
+            WaitIO((struct IORequest *)d->ahi_req[i]);
+            d->ahi_busy[i] = FALSE;
+        }
+        if (i > 0 && d->ahi_req[i])
+            FreeVec(d->ahi_req[i]);
+        if (d->ahi_buf[i])
+            FreeVec(d->ahi_buf[i]);
+        d->ahi_buf[i] = NULL;
+    }
+    if (d->ahi_open)
+        CloseDevice((struct IORequest *)d->ahi_req[0]);
+    if (d->ahi_req[0])
+        DeleteIORequest((struct IORequest *)d->ahi_req[0]);
+    if (d->ahi_port)
+        DeleteMsgPort(d->ahi_port);
+    for (i = 0; i < AUDIO_BUFFERS; i++)
+        d->ahi_req[i] = NULL;
+    d->ahi_port = NULL;
+    d->ahi_open = FALSE;
+    d->ahi_last = NULL;
+}
+
+/* Like the timer, opened by the task that runs the program */
+static void open_audio(struct M68KEmuDisplay *d)
+{
+    UBYTE i;
+
+    d->ahi_tried = TRUE;
+    d->ahi_port = CreateMsgPort();
+    if (d->ahi_port)
+        d->ahi_req[0] = (struct AHIRequest *)CreateIORequest(
+            d->ahi_port, sizeof(struct AHIRequest));
+    if (!d->ahi_req[0])
+        goto fail;
+    d->ahi_req[0]->ahir_Version = 4;
+    if (OpenDevice(AHINAME, AHI_DEFAULT_UNIT, (struct IORequest *)d->ahi_req[0], 0) != 0)
+        goto fail;
+    d->ahi_open = TRUE;
+
+    for (i = 0; i < AUDIO_BUFFERS; i++)
+    {
+        if (i > 0)
+        {
+            d->ahi_req[i] = AllocVec(sizeof(struct AHIRequest), MEMF_ANY);
+            if (!d->ahi_req[i])
+                goto fail;
+            CopyMem(d->ahi_req[0], d->ahi_req[i], sizeof(struct AHIRequest));
+        }
+        d->ahi_buf[i] = AllocVec(AUDIO_BUFFER_FRAMES * 2 * sizeof(WORD), MEMF_ANY);
+        if (!d->ahi_buf[i])
+            goto fail;
+    }
+    return;
+
+fail:
+    bug("[m68kemu] display: no usable ahi.device unit, running silently\n");
+    close_audio(d);
+}
+
+static void display_audio(struct M68KEmuContext *ctx, const WORD *samples,
+                          ULONG frames)
+{
+    struct M68KEmuDisplay *d = (struct M68KEmuDisplay *)ctx->presenter.data;
+    struct AHIRequest *req;
+    UBYTE i;
+
+    if (!d->ahi_tried)
+        open_audio(d);
+    if (!d->ahi_open)
+        return;
+
+    i = d->ahi_next;
+    req = d->ahi_req[i];
+    if (d->ahi_busy[i])
+        WaitIO((struct IORequest *)req);    /* played; reuse it */
+    if (frames > AUDIO_BUFFER_FRAMES)
+        frames = AUDIO_BUFFER_FRAMES;
+    CopyMem((APTR)samples, d->ahi_buf[i], frames * 2 * sizeof(WORD));
+
+    req->ahir_Std.io_Message.mn_Node.ln_Pri = 0;
+    req->ahir_Std.io_Command = CMD_WRITE;
+    req->ahir_Std.io_Data    = d->ahi_buf[i];
+    req->ahir_Std.io_Length  = frames * 2 * sizeof(WORD);
+    req->ahir_Std.io_Offset  = 0;
+    req->ahir_Frequency      = ctx->presenter.audio_rate;
+    req->ahir_Type           = AHIST_S16S;
+    req->ahir_Volume         = 0x10000;
+    req->ahir_Position       = 0x8000;
+    /* Chain behind the previous write while it is still playing */
+    req->ahir_Link = (d->ahi_last && !CheckIO((struct IORequest *)d->ahi_last))
+                     ? d->ahi_last : NULL;
+    SendIO((struct IORequest *)req);
+
+    d->ahi_busy[i] = TRUE;
+    d->ahi_last = req;
+    d->ahi_next = (i + 1) % AUDIO_BUFFERS;
 }
 
 /* Feed window input to the chipset; FALSE when the user asked to stop */
@@ -244,6 +369,7 @@ static void display_destroy(struct M68KEmuContext *ctx)
 
     if (!d)
         return;
+    close_audio(d);
     if (d->win)
     {
         struct IntuiMessage *msg;
@@ -260,6 +386,7 @@ static void display_destroy(struct M68KEmuContext *ctx)
     FreeVec(d);
 
     ctx->presenter.present = NULL;
+    ctx->presenter.audio   = NULL;
     ctx->presenter.destroy = NULL;
     ctx->presenter.data    = NULL;
 }
@@ -278,8 +405,10 @@ BOOL M68KEmu_DisplayAttach(struct M68KEmuContext *ctx)
     if (!d)
         return FALSE;
 
-    ctx->presenter.data    = d;
-    ctx->presenter.present = display_present;
-    ctx->presenter.destroy = display_destroy;
+    ctx->presenter.data       = d;
+    ctx->presenter.present    = display_present;
+    ctx->presenter.audio      = display_audio;
+    ctx->presenter.audio_rate = AUDIO_RATE;
+    ctx->presenter.destroy    = display_destroy;
     return TRUE;
 }

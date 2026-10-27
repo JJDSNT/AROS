@@ -58,15 +58,19 @@ struct M68KEmuFrame
     ULONG   frame_us;       /* duration of one frame of chipset time */
 };
 
-/* Receives every completed frame. present() returns FALSE to stop the
-   program. destroy() runs when M68KEmu_Execute() returns, in the task that
+/* Receives every completed frame. audio(), if set with a non-zero
+   audio_rate, first gets that frame's interleaved stereo samples (native
+   WORD left, right) taken at audio_rate Hz of chipset time. present()
+   returns FALSE to stop the program. destroy() runs when M68KEmu_Execute() returns, in the task that
    ran the program, or with the context if it never ran; it must clear the
    presenter. */
 struct M68KEmuPresenter
 {
     BOOL  (*present)(struct M68KEmuContext *ctx, const struct M68KEmuFrame *frame);
+    void  (*audio)(struct M68KEmuContext *ctx, const WORD *samples, ULONG frames);
     void  (*destroy)(struct M68KEmuContext *ctx);
     APTR    data;
+    ULONG   audio_rate;
 };
 
 struct M68KHeapBlock
@@ -188,6 +192,14 @@ struct M68KEmuContext
     UBYTE   key_count;
     UBYTE   mouse_x;                        /* port 0 quadrature counters */
     UBYTE   mouse_y;
+
+    /* Audio samples collected since the last frame */
+    WORD   *audio_buf;                      /* interleaved left, right */
+    ULONG   audio_frames;
+    ULONG   audio_cap;                      /* in stereo frames */
+    ULONG   audio_clock;                    /* CPU cycles per second */
+    ULONG   audio_dropped;
+    unsigned long long audio_acc;
 #endif
 };
 
