@@ -666,6 +666,8 @@ u_long	 tcp_ss_incr __P((struct tcpcb *, u_int));
 void	 tcp_hystart_init __P((struct tcpcb *));
 int	 tcp_autobuf_grow __P((struct tcpcb *, struct sockbuf *, u_long));
 void	 tcp_tlp_arm __P((struct tcpcb *));
+void	 tcp_timer_want __P((u_int32_t));
+u_int32_t tcp_rexmt_due __P((int *));
 int	 tcp_rack_on __P((const struct tcpcb *));
 void	 tcp_rack_sent __P((struct tcpcb *, tcp_seq, tcp_seq, int));
 void	 tcp_rack_ack __P((struct tcpcb *, const struct tcpopt *, tcp_seq));
