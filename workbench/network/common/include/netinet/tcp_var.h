@@ -54,6 +54,24 @@
  */
 #define TCP_SACK_BOARD	32
 
+/*
+ * RACK (RFC 8985 section 6): when each part of what is in flight was last
+ * sent. t_xmap[i] covers [the previous entry's end (t_xmap_start for the
+ * first), end), in sequence order.
+ */
+#if defined(__mc68000__)
+#define	TCP_XMAP_LEN	24
+#else
+#define	TCP_XMAP_LEN	64
+#endif
+struct tcp_xrec {
+	tcp_seq		end;
+	u_int32_t	ts;		/* tcp_ms() when last sent */
+	u_short		flags;
+#define	XR_RETX		0x01		/* last sent as a retransmission */
+#define	XR_DELIV	0x02		/* acknowledged or SACKed */
+};
+
 struct sackblk {
 	tcp_seq	start;		/* left edge (first unacknowledged byte) */
 	tcp_seq	end;		/* right edge (next byte after SACK'd data) */
@@ -303,6 +321,18 @@ struct tcpcb {
 /* Tail Loss Probe (RFC 8985 section 7): where the probe's data ends */
 	tcp_seq	t_tlp_end;
 
+/* RACK (RFC 8985 section 6), tcp_rack.c */
+	struct tcp_xrec t_xmap[TCP_XMAP_LEN];
+	tcp_seq	t_xmap_start;
+	u_short	t_xmap_n;
+	u_char	t_rack_reord;		/* reordering seen on this connection */
+	u_char	t_rack_mult;		/* reo_wnd multiplier, grown by D-SACKs */
+	u_int32_t t_rack_ts;		/* RACK.xmit_ts: latest send time delivered */
+	tcp_seq	t_rack_end;		/* RACK.end_seq */
+	u_int32_t t_rack_rtt;		/* RACK.rtt (ms) */
+	u_int32_t t_rack_minrtt;	/* least RACK.rtt (ms; 0: none) */
+	tcp_seq	t_rack_lost;		/* the holes below it are lost */
+
 /* TUBA stuff */
 	caddr_t	t_tuba_pcb;		/* next level down pcb for TCP over z */
 };
@@ -485,7 +515,8 @@ struct	tcpstat {
 #define	TCPCTL_SENDBUF_MAX	17	/* send buffer autosizing ceiling (0: off) */
 #define	TCPCTL_RECVBUF_MAX	18	/* receive buffer autosizing ceiling (0: off) */
 #define	TCPCTL_TLP		19	/* tail loss probe (RFC 8985 section 7) */
-#define TCPCTL_MAXID		20
+#define	TCPCTL_RACK		20	/* RACK loss detection (RFC 8985 section 6) */
+#define TCPCTL_MAXID		21
 
 #define TCPCTL_NAMES { \
 	{ 0, 0 }, \
@@ -508,6 +539,7 @@ struct	tcpstat {
 	{ "sendbuf_max", CTLTYPE_INT }, \
 	{ "recvbuf_max", CTLTYPE_INT }, \
 	{ "tlp", CTLTYPE_INT }, \
+	{ "rack", CTLTYPE_INT }, \
 }
 
 #ifdef KERNEL
@@ -547,6 +579,8 @@ extern	int tcp_rexmit_min;	/* minimum retransmission timeout (ms) */
 extern	int tcp_abc_l;		/* slow start byte counting limit (RFC 3465) */
 extern	int tcp_do_hystart;	/* HyStart++ (RFC 9406) */
 extern	int tcp_do_tlp;		/* tail loss probe (RFC 8985) */
+extern	int tcp_do_rack;	/* RACK loss detection (RFC 8985) */
+extern	int tcprexmtthresh;	/* DupThresh */
 extern	u_long tcp_autosndbuf_max;	/* send buffer autosizing ceiling */
 extern	u_long tcp_autorcvbuf_max;	/* receive buffer autosizing ceiling */
 #define	TCP_AUTOSNDBUF_INC	(16 * 1024)	/* send buffer autosizing step */
@@ -610,6 +644,11 @@ u_long	 tcp_ss_incr __P((struct tcpcb *, u_int));
 void	 tcp_hystart_init __P((struct tcpcb *));
 int	 tcp_autobuf_grow __P((struct tcpcb *, struct sockbuf *, u_long));
 void	 tcp_tlp_arm __P((struct tcpcb *));
+int	 tcp_rack_on __P((const struct tcpcb *));
+void	 tcp_rack_sent __P((struct tcpcb *, tcp_seq, tcp_seq, int));
+void	 tcp_rack_ack __P((struct tcpcb *, const struct tcpopt *, tcp_seq));
+void	 tcp_rack_reset __P((struct tcpcb *));
+int	 tcp_dsack_block __P((const struct tcpopt *, tcp_seq, struct sackblk *));
 int	 tcp_rscale __P((struct socket *));
 #endif /* KERNEL */
 
