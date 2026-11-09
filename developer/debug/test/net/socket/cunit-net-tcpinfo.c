@@ -576,6 +576,52 @@ void testTCPINFO_PASSIVE_RTT(void)
     CloseSocket(s);
 }
 
+static int bufsize(int s, int opt)
+{
+    int v = 0;
+    socklen_t l = sizeof(v);
+
+    getsockopt(s, SOL_SOCKET, opt, &v, &l);
+    return v;
+}
+
+/* Socket buffer autosizing: the ceilings are sysctls that refuse what
+ * sbreserve() could not take; a default send buffer grows when it is
+ * what holds a bulk sender back, and one the application sized stays. */
+void testTCPINFO_AUTOSIZE(void)
+{
+    LONG snd = 0, rcv = 0, big = 64 * 1024 * 1024;
+    int c, s, c2, s2, v = 96 * 1024, n0, n1, r0, r1;
+
+    CU_ASSERT_EQUAL(tcpctl(TCPCTL_SENDBUF_MAX, &snd, NULL), 0);
+    CU_ASSERT_EQUAL(tcpctl(TCPCTL_RECVBUF_MAX, &rcv, NULL), 0);
+    CU_ASSERT(snd > 0 && rcv > 0);
+    CU_ASSERT_NOT_EQUAL(tcpctl(TCPCTL_SENDBUF_MAX, &snd, &big), 0);
+
+    CU_ASSERT_EQUAL_FATAL(st_tcp_pair(AF_INET, &c, &s), 0);
+    n0 = bufsize(c, SO_SNDBUF);
+    r0 = bufsize(s, SO_RCVBUF);
+    CU_ASSERT_EQUAL(st_oneway(c, s, 4 * 1024 * 1024), 0);
+    n1 = bufsize(c, SO_SNDBUF);
+    r1 = bufsize(s, SO_RCVBUF);
+    printf("\n    4 MB over the loopback: send buffer %d -> %d, receive buffer %d -> %d (ceilings %ld, %ld)\n",
+           n0, n1, r0, r1, (long)snd, (long)rcv);
+    CU_ASSERT(n1 > n0 && n1 <= snd);
+    CU_ASSERT(r1 >= r0 && r1 <= rcv);
+    CloseSocket(c);
+    CloseSocket(s);
+
+    CU_ASSERT_EQUAL_FATAL(st_tcp_pair(AF_INET, &c2, &s2), 0);
+    CU_ASSERT_EQUAL(setsockopt(c2, SOL_SOCKET, SO_SNDBUF, &v, sizeof(v)), 0);
+    n0 = bufsize(c2, SO_SNDBUF);
+    CU_ASSERT_EQUAL(st_oneway(c2, s2, 4 * 1024 * 1024), 0);
+    n1 = bufsize(c2, SO_SNDBUF);
+    printf("    with SO_SNDBUF %d: %d -> %d\n", v, n0, n1);
+    CU_ASSERT_EQUAL(n1, n0);
+    CloseSocket(c2);
+    CloseSocket(s2);
+}
+
 /* A listening socket reports LISTEN. */
 void testTCPINFO_LISTEN(void)
 {
@@ -625,6 +671,7 @@ int main(int argc, char **argv)
         !CU_add_test(p, "a short buffer gets the start", testTCPINFO_SHORT) ||
         !CU_add_test(p, "a full reassembly queue takes the segment that fills its hole", testTCPINFO_REASS_FULL) ||
         !CU_add_test(p, "the accepted side has an RTT from the handshake", testTCPINFO_PASSIVE_RTT) ||
+        !CU_add_test(p, "socket buffers grow unless the application sized them", testTCPINFO_AUTOSIZE) ||
         !CU_add_test(p, "a listening socket reports LISTEN", testTCPINFO_LISTEN))
     {
         CU_cleanup_registry();
