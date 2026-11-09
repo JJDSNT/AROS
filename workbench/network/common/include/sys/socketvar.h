@@ -109,7 +109,7 @@ struct socket {
 #if defined(__mc68000__)
 #define	SB_MAX		(64*1024)	/* max chars in sockbuf (m68k) */
 #else
-#define	SB_MAX		(512*1024)	/* max chars in sockbuf */
+#define	SB_MAX		(2*1024*1024)	/* max chars in sockbuf */
 #endif
 #define	SB_LOCK		0x01		/* lock on data queue */
 #define	SB_WANT		0x02		/* someone is waiting to lock */
@@ -119,6 +119,7 @@ struct socket {
 #define	SB_NOTIFY	(SB_WAIT|SB_SEL|SB_ASYNC)
 #define	SB_COLL		0x20		/* collision selecting */
 #define	SB_NOINTR	0x40		/* operations not interruptible */
+#define	SB_AUTOSIZE	0x80		/* TCP grows it as needed (no SO_SNDBUF/SO_RCVBUF) */
 
 	u_long	so_eventmask;		/* FD_* event classes to report (SO_EVENTMASK) */
 	caddr_t	so_tpcb;		/* Wisc. protocol control block XXX */

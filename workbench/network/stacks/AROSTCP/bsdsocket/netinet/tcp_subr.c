@@ -381,6 +381,20 @@ int 	tcp_rttdflt = TCPTV_RTOBASE;	/* initial RTO, s (net.inet.tcp.rttdflt) */
  * RFC 6298 section 2.4 says it SHOULD be at least 1 s; FreeBSD and Linux use
  * about 200 ms, and so does this stack. */
 int	tcp_rexmit_min = TCPTV_REXMTMIN_MS;
+/*
+ * Socket buffer autosizing (as FreeBSD's net.inet.tcp.sendbuf_max and
+ * recvbuf_max): a buffer the application did not size (SB_AUTOSIZE) grows
+ * up to these while it is what limits the connection; 0 is off. They stay
+ * within the cluster pool (mbconf.maxmem, 4 MB here, 1 MB on m68k) and
+ * within what sbreserve() takes (sb_max).
+ */
+#if defined(__mc68000__)
+u_long	tcp_autosndbuf_max = 48 * 1024;
+u_long	tcp_autorcvbuf_max = 48 * 1024;
+#else
+u_long	tcp_autosndbuf_max = 1024 * 1024;
+u_long	tcp_autorcvbuf_max = 1024 * 1024;
+#endif
 int	tcp_do_rfc1323 = 1;
 int	tcp_do_rfc1644 = 0;	/* T/TCP (RFC 1644) - off: Historic, RFC 6247 */
 int	tcp_do_sack = 1;	/* enable SACK (RFC 2018) */
@@ -406,6 +420,64 @@ extern struct in_addr zeroin_addr;
 #ifndef TCBHASHSIZE
 #define TCBHASHSIZE	128
 #endif
+
+/*
+ * Grow an autosized buffer (SB_AUTOSIZE) of a connection towards want
+ * bytes. The mbuf cluster pool (mbconf.maxmem) is shared by every
+ * connection and by the interfaces' receive buffers, and runs out for all
+ * of them at once (mbstat.m_drops). A byte of socket buffer can take two
+ * of the pool (sb_mbmax; a full-sized segment's 1448 bytes sit in a 2 KB
+ * cluster and an mbuf): what autosizing has given all live connections,
+ * at that cost (tcp_autobuf_used, given back by tcp_close()), stays within
+ * 3/8 of the pool - a buffer grows by what is left, if less than asked -
+ * and nothing grows while half of the pool's clusters are in use. A
+ * buffer sbreserve() refuses stops growing. 1 if it grew.
+ */
+u_long	tcp_autobuf_used;
+
+int
+tcp_autobuf_grow(tp, sb, want)
+struct tcpcb *tp;
+struct sockbuf *sb;
+u_long want;
+{
+    u_long old = sb->sb_hiwat;
+    u_long cap = mbconf.maxmem * 1024 / 8 * 3;
+    u_long inuse = (mbstat.m_clusters - mbstat.m_clfree) * mbconf.mclbytes;
+
+    if(want <= old || inuse >= mbconf.maxmem * 1024 / 2 || tcp_autobuf_used >= cap)
+        return 0;
+    if((want - old) * 2 > cap - tcp_autobuf_used)
+        want = old + (cap - tcp_autobuf_used) / 2;
+    if(want - old < mbconf.mclbytes)
+        return 0;
+    if(!sbreserve(sb, want)) {
+        sb->sb_flags &= ~SB_AUTOSIZE;
+        return 0;
+    }
+    tp->t_autobuf += 2 * (sb->sb_hiwat - old);
+    tcp_autobuf_used += 2 * (sb->sb_hiwat - old);
+    return 1;
+}
+
+/*
+ * The window scale to ask for (RFC 7323 section 2.2): enough for the
+ * receive buffer, or for what autosizing may grow it to; the scale is
+ * fixed at the handshake.
+ */
+int
+tcp_rscale(so)
+struct socket *so;
+{
+    u_long want = so->so_rcv.sb_hiwat;
+    int scale = 0;
+
+    if((so->so_rcv.sb_flags & SB_AUTOSIZE) && tcp_autorcvbuf_max > want)
+        want = tcp_autorcvbuf_max;
+    while(scale < TCP_MAX_WINSHIFT && ((u_long)TCP_MAXWIN << scale) < want)
+        scale++;
+    return scale;
+}
 
 /*
  * Tcp initialization
@@ -812,6 +884,7 @@ register struct tcpcb *tp;
     }
     if(tp->t_template)
         (void) m_free(dtom(tp->t_template));
+    tcp_autobuf_used -= tp->t_autobuf;  /* autosizing's budget back */
     bsd_free(tp, M_PCB);
     inp->inp_ppcb = 0;
     soisdisconnected(so);

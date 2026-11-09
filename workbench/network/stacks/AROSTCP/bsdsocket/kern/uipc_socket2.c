@@ -231,6 +231,8 @@ int connstatus;
     so->so_pgid = head->so_pgid;
     so->so_eventmask = head->so_eventmask;
     (void) soreserve(so, head->so_snd.sb_hiwat, head->so_rcv.sb_hiwat);
+    so->so_snd.sb_flags |= head->so_snd.sb_flags & SB_AUTOSIZE;
+    so->so_rcv.sb_flags |= head->so_rcv.sb_flags & SB_AUTOSIZE;
     soqinsque(head, so, soqueue);
     if((*so->so_proto->pr_usrreq)(so, PRU_ATTACH,
                                   (struct mbuf *)0, (struct mbuf *)0, (struct mbuf *)0)) {

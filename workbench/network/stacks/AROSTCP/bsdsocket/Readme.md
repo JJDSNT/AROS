@@ -170,6 +170,23 @@ the stack aborts cleanly instead of running with no mbufs.
 > allocation and fail the operation with `ENOBUFS` rather than dereferencing `NULL` under memory
 > pressure. This invariant must be maintained by new code.
 
+**Socket buffers** default to 128 KB for TCP (`tcp_sendspace`/`tcp_recvspace`; 16 KB on m68k) and
+grow as a connection needs them, as in FreeBSD, unless the application sized them with `SO_SNDBUF`/
+`SO_RCVBUF` (`SB_AUTOSIZE`, inherited by accepted sockets): the send buffer by 16 KB when it is 7/8
+full, the windows would take all of it and the peer's window is larger (`tcp_output()`); the
+receive buffer doubles when more than 3/8 of it arrives in order in half an RTT (`tcp_input()`),
+and the window scale asked for at the handshake covers the ceiling (`tcp_rscale()`). The ceilings
+are `net.inet.tcp.sendbuf_max` and `recvbuf_max` (1 MB, 48 KB on m68k; 0 turns autosizing off),
+under `sb_max` (`SB_MAX`, 2 MB, 64 KB on m68k). The mbuf pool is shared by every connection and
+runs out for all of them at once, so growth has a budget (`tcp_autobuf_grow()`): a byte of buffer
+counts as two of the pool (`sb_mbmax`; a 1448-byte segment sits in a 2 KB cluster and an mbuf),
+what all live connections were given stays within 3/8 of the cap and goes back at `tcp_close()`,
+and nothing grows while half of the pool's clusters are in use. Without the budget, eight
+connections receiving at 100 ms grew while their buffers were empty, filled them together and ran
+the pool out. With the default buffers a connection moved 128 KB per round trip (10 Mbit/s at
+100 ms); on the hosted bench it now receives 54.6 Mbit/s and sends 69.6 at 100 ms, and 130/111 at
+20 ms.
+
 **General allocations** (`kern_malloc.c`, the `MALLOC`/`bsd_malloc` family) come from a single Exec
 memory pool (`CreatePool(MEMF_PUBLIC, …)`) serialized by `malloc_semaphore`; these can also return
 `NULL` and are checked accordingly.
