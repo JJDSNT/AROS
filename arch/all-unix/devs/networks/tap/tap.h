@@ -70,6 +70,9 @@ extern int rand(void);
 #define TAP_ENV_MTU_FORMAT "SYS/Net/tap/unit%ld/MTU"
 #define TAP_FRAME_MAX(mtu) (ETH_HLEN + (mtu))
 
+/* packet types a unit remembers its openers read (receive backpressure) */
+#define TAP_RXTYPES      8
+
 
 struct tap_opener {
     struct MinNode              node;
@@ -133,6 +136,19 @@ struct tap_unit
     struct MsgPort              *write_queue;
 
     struct uioInterrupt		irq;
+
+    /*
+     * Receive backpressure. A frame that no read request took, of a type
+     * an opener reads (rxtypes, recorded by CMD_READ), is held in rxbuf
+     * (rxheld bytes) and the descriptor is not read until a CMD_READ
+     * comes: what follows waits in the host's tap queue, as on a real
+     * wire it would wait in the card's ring, instead of being dropped.
+     * rxreset (an opener closed) drops the held frame and the types.
+     */
+    ULONG                       rxheld;
+    ULONG                       rxtypes[TAP_RXTYPES];
+    ULONG                       nrxtypes;
+    BOOL                        rxreset;
 };
 
 struct tap_base
