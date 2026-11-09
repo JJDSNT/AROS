@@ -26,13 +26,18 @@ static void tap_receive(struct tap_base *TAPBase, struct tap_unit *unit)
     struct tap_opener *opener, *opener_next;
     struct IOSana2Req *req, *req_next;
     BOOL bcast = FALSE, mcast = FALSE;
-    BOOL accepted = 0;
+    BOOL accepted = 0, wanted = FALSE;
     struct tap_tracker *tracker, *tracker_next;
+    ULONG i;
 
     D(bug("[tap] [io:%d] got a packet\n", unit->num));
 
-    /* Try to read the packet */
-    nread = Hidd_UnixIO_ReadFile(TAPBase->unixio, unit->fd, buf, unit->frame_max, &ioerr);
+    /* the frame held for a read request, else the next one */
+    if (unit->rxheld)
+        nread = unit->rxheld;
+    else
+        nread = Hidd_UnixIO_ReadFile(TAPBase->unixio, unit->fd, buf, unit->frame_max, &ioerr);
+    unit->rxheld = 0;
     if (nread == -1)
     {
         D(bug("[tap] [io:%d] read failed (%d)\n", unit->num, ioerr));
@@ -89,6 +94,7 @@ static void tap_receive(struct tap_base *TAPBase, struct tap_unit *unit)
 
             if (req->ios2_PacketType == packet_type) {
                 D(bug("[tap] [io:%d] found a request that wants this packet, sending it\n", unit->num));
+                wanted = TRUE;
 
                 /* record broadcast/multicast status */
                 req->ios2_Req.io_Flags &= ~(SANA2IOF_BCAST | SANA2IOF_MCAST);
@@ -153,6 +159,21 @@ static void tap_receive(struct tap_base *TAPBase, struct tap_unit *unit)
 
         if (accepted)
             break;
+    }
+
+    /* no request for it now, but its type is read: hold it, and read
+     * nothing more until a CMD_READ (tap_read() signals) */
+    if (! accepted && ! wanted) {
+        Disable();
+        for (i = 0; i < unit->nrxtypes && unit->rxtypes[i] != packet_type; i++)
+            ;
+        if (i < unit->nrxtypes)
+            unit->rxheld = nread;
+        Enable();
+        if (unit->rxheld) {
+            D(bug("[tap] [io:%d] no request for the packet yet, holding it\n", unit->num));
+            return;
+        }
     }
 
     if (! accepted) {
@@ -348,7 +369,23 @@ void tap_iotask(struct tap_base *TAPBase, struct tap_unit *unit)
 
         do
         {
-            events = Hidd_UnixIO_Poll(TAPBase->unixio, unit->fd, vHidd_UnixIO_Read | write_flag, NULL);
+            ULONG mode;
+
+            if (unit->rxreset) {
+                unit->rxreset = FALSE;
+                unit->rxheld = 0;
+                unit->nrxtypes = 0;
+            }
+
+            /* a held frame first: a read request may have come for it;
+             * while it stays held, the descriptor is not read */
+            if (unit->rxheld)
+                tap_receive(TAPBase, unit);
+            mode = (unit->rxheld ? 0 : vHidd_UnixIO_Read) | write_flag;
+            if (mode == 0)
+                break;
+
+            events = Hidd_UnixIO_Poll(TAPBase->unixio, unit->fd, mode, NULL);
 
             if (events == -1)
                 continue;
